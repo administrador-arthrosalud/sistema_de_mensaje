@@ -1,0 +1,7 @@
+.env
+/config/local.php
+/vendor/
+/node_modules/
+/database/seed.sql
+/*.csv
+/outputs/

@@ -1,0 +1,5 @@
+ALTER TABLE appointments
+    ADD COLUMN IF NOT EXISTS sede_nombre VARCHAR(80) NULL AFTER specialty,
+    ADD COLUMN IF NOT EXISTS consultorio VARCHAR(160) NULL AFTER specialty,
+    ADD COLUMN IF NOT EXISTS modulo VARCHAR(80) NULL AFTER consultorio,
+    ADD COLUMN IF NOT EXISTS codigo_ipress VARCHAR(8) NULL AFTER modulo;

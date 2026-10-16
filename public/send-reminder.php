@@ -5,9 +5,11 @@ ini_set('display_errors', '0');
 error_reporting(E_ALL);
 session_start();
 
+require_once __DIR__ . '/../config/access.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../app/Repositories/AppointmentRepository.php';
 require_once __DIR__ . '/../app/Services/ChatbotApiClient.php';
+require_once __DIR__ . '/../app/Services/MessageAttachment.php';
 
 function finishWithNotification(string $type, string $message): never
 {
@@ -28,7 +30,7 @@ function markAttemptFailed(?AppointmentRepository $repository, ?int $attemptId, 
     }
 }
 
-if (!in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true)) {
+if (!isLocalRequest()) {
     http_response_code(403);
     exit('El envío está limitado al equipo local.');
 }
@@ -37,6 +39,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     header('Allow: POST');
     exit('Método no permitido.');
+}
+
+if (MessageAttachment::requestExceededPostLimit()) {
+    finishWithNotification('error', 'La imagen es demasiado grande; el máximo es 5 MB.');
 }
 
 $sessionToken = (string) ($_SESSION['csrf_token'] ?? '');
@@ -75,11 +81,12 @@ try {
     if (mb_strlen($message, 'UTF-8') > 1000) {
         throw new InvalidArgumentException('El mensaje no puede superar los 1000 caracteres.');
     }
+    $attachment = MessageAttachment::fromUpload($_FILES['attachment'] ?? null);
 
     $chatbot = ChatbotApiClient::fromEnvironment();
     $destination = $chatbot->normalizeDestination($destination);
     $attemptId = $repository->createReminderAttempt($appointment, $destination);
-    $result = $chatbot->sendText($destination, $message);
+    $result = $chatbot->sendMessage($destination, $message, $attachment);
     $apiAccepted = true;
     $repository->finishReminderAttempt($attemptId, 'sent', (int) $result['http_status']);
 

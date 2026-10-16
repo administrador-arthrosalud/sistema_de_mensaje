@@ -62,7 +62,7 @@
             listVersion = data.version;
             renderList(data.conversations || []);
         } catch {
-            // Un problema temporal de red o de MySQL se reintenta en el siguiente sondeo.
+            // Un problema temporal de red o de la base de datos se reintenta en el siguiente sondeo.
         }
     };
 
@@ -100,6 +100,20 @@
             // Igual que en pollList: se reintenta en el siguiente sondeo.
         }
     };
+
+    // Validación previa de la imagen opcional; PHP vuelve a validarla al recibirla.
+    const attachment = document.querySelector('#chat-composer-form input[name="attachment"]');
+    attachment?.addEventListener('change', () => {
+        const file = attachment.files?.[0];
+        if (!file) return;
+        if (!['image/png', 'image/jpeg'].includes(file.type)) {
+            window.alert('Solo se permiten imágenes PNG o JPG.');
+            attachment.value = '';
+        } else if (file.size > 5 * 1024 * 1024) {
+            window.alert('La imagen debe pesar como máximo 5 MB.');
+            attachment.value = '';
+        }
+    });
 
     const thread = document.querySelector('#chat-thread');
     if (thread) thread.scrollTop = thread.scrollHeight;

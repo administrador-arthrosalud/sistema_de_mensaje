@@ -13,24 +13,27 @@ final class SigesAppointmentSyncService
         $this->upsertAppointment = $this->local->prepare(
             "INSERT INTO appointments
                 (source_key, siges_cita_id, patient_name, appointment_date, appointment_time, doctor_name,
-                 specialty, sede_nombre, consultorio, modulo, codigo_ipress, appointment_note, visit_reason, status)
+                 specialty, sede_nombre, consultorio, modulo, codigo_ipress, appointment_note, visit_reason,
+                 destination, status)
              VALUES
                 (:source_key, :siges_cita_id, :patient_name, :appointment_date, :appointment_time, :doctor_name,
-                 :specialty, :sede_nombre, :consultorio, :modulo, :codigo_ipress, :appointment_note, :visit_reason, :status)
-             ON DUPLICATE KEY UPDATE
-                siges_cita_id = VALUES(siges_cita_id),
-                patient_name = VALUES(patient_name),
-                appointment_date = VALUES(appointment_date),
-                appointment_time = VALUES(appointment_time),
-                doctor_name = VALUES(doctor_name),
-                specialty = VALUES(specialty),
-                sede_nombre = VALUES(sede_nombre),
-                consultorio = VALUES(consultorio),
-                modulo = VALUES(modulo),
-                codigo_ipress = VALUES(codigo_ipress),
-                appointment_note = VALUES(appointment_note),
-                visit_reason = VALUES(visit_reason),
-                status = VALUES(status)"
+                 :specialty, :sede_nombre, :consultorio, :modulo, :codigo_ipress, :appointment_note, :visit_reason,
+                 :destination, :status)
+             ON CONFLICT (source_key) DO UPDATE SET
+                siges_cita_id = EXCLUDED.siges_cita_id,
+                patient_name = EXCLUDED.patient_name,
+                appointment_date = EXCLUDED.appointment_date,
+                appointment_time = EXCLUDED.appointment_time,
+                doctor_name = EXCLUDED.doctor_name,
+                specialty = EXCLUDED.specialty,
+                sede_nombre = EXCLUDED.sede_nombre,
+                consultorio = EXCLUDED.consultorio,
+                modulo = EXCLUDED.modulo,
+                codigo_ipress = EXCLUDED.codigo_ipress,
+                appointment_note = EXCLUDED.appointment_note,
+                visit_reason = EXCLUDED.visit_reason,
+                destination = EXCLUDED.destination,
+                status = EXCLUDED.status"
         );
         $this->matchExistingAppointment = $this->local->prepare(
             "SELECT id FROM appointments
@@ -49,7 +52,7 @@ final class SigesAppointmentSyncService
                 appointment_time = :appointment_time, doctor_name = :doctor_name, specialty = :specialty,
                 sede_nombre = :sede_nombre, consultorio = :consultorio, modulo = :modulo,
                 codigo_ipress = :codigo_ipress, appointment_note = :appointment_note,
-                visit_reason = :visit_reason, status = :status
+                visit_reason = :visit_reason, destination = :destination, status = :status
              WHERE id = :local_id"
         );
         $this->markAppointmentNotCurrent = $this->local->prepare(
@@ -138,6 +141,36 @@ final class SigesAppointmentSyncService
         }
     }
 
+    /**
+     * SIGES guarda el celular en cita.contactos como JSON de texto, p. ej.
+     * '["987654321"]' o con varios números: '["987654321","912345678"]'.
+     * Devuelve el primer número que parezca un celular peruano válido, en
+     * formato local normalizado (con 51 antepuesto); null si no hay ninguno
+     * reconocible. Es solo un punto de partida: el envío sigue mostrando el
+     * número para que una persona lo revise o corrija antes de confirmar.
+     */
+    public static function extractDestination(?string $rawContacts): ?string
+    {
+        if ($rawContacts === null || trim($rawContacts) === '') {
+            return null;
+        }
+        $decoded = json_decode($rawContacts, true);
+        if (!is_array($decoded)) {
+            return null;
+        }
+        foreach ($decoded as $candidate) {
+            $digits = preg_replace('/\D+/', '', (string) $candidate) ?? '';
+            if (preg_match('/^9\d{8}$/', $digits)) {
+                return '51' . $digits;
+            }
+            if (preg_match('/^51\d{9}$/', $digits)) {
+                return $digits;
+            }
+        }
+
+        return null;
+    }
+
     private function saveAppointment(array $row): void
     {
         $sourceId = (int) $row['siges_cita_id'];
@@ -155,6 +188,7 @@ final class SigesAppointmentSyncService
             ':codigo_ipress' => $row['codigo_ipress'],
             ':appointment_note' => $row['appointment_note'],
             ':visit_reason' => $row['visit_reason'],
+            ':destination' => self::extractDestination($row['raw_contacts'] ?? null),
             ':status' => $row['status'] ?? '',
         ];
 
@@ -184,11 +218,11 @@ final class SigesAppointmentSyncService
     private function fetchCurrentAppointmentSnapshots(): array
     {
         return $this->siges->query(
-            'SELECT id AS siges_cita_id, fecha AS appointment_date, hora AS appointment_time,
+            "SELECT id AS siges_cita_id, fecha AS appointment_date, hora AS appointment_time,
                     estado::text AS status
              FROM public.cita
-             WHERE fecha >= CURRENT_DATE
-             ORDER BY id ASC'
+             WHERE fecha >= CURRENT_DATE AND tipo::text = 'NORMAL'
+             ORDER BY id ASC"
         )->fetchAll();
     }
 
@@ -222,12 +256,25 @@ final class SigesAppointmentSyncService
                 c.hora AS appointment_time,
                 COALESCE(pm.medico, '') AS doctor_name,
                 COALESCE(pm.especialidad, '') AS specialty,
-                COALESCE(sd.nombre, 'SEDE NO MAPEADA') AS sede_nombre,
+                CASE
+                    -- Consultorio 3 Lince es una dirección propia (Jr. Joaquín Bernal 344),
+                    -- distinta de la sede Lince principal, aunque comparte el mismo código
+                    -- IPRESS (00033237) que los consultorios 1 y 2. SIGES no lo modela como
+                    -- una fila propia en public.sede, así que se distingue por el nombre del
+                    -- consultorio, no por el IPRESS. %% porque la consulta pasa por sprintf().
+                    WHEN co.descripcion ILIKE '%%CONSULTORIO 3 LINCE%%' THEN 'LINCE - CONSULTORIO 3'
+                    WHEN co.codigo_ipress = '00027276' THEN 'LIMA'
+                    WHEN co.codigo_ipress = '00033237' THEN 'LINCE'
+                    -- Consultorios sin IPRESS en SIGES (p. ej. "Consultorio Atención Inmediata Lince").
+                    WHEN co.descripcion ILIKE '%%LINCE%%' THEN 'LINCE'
+                    ELSE 'SEDE NO MAPEADA'
+                END AS sede_nombre,
                 co.descripcion AS consultorio,
                 co.modulo,
                 co.codigo_ipress,
                 c.observacion AS appointment_note,
                 atencion.motivoconsulta AS visit_reason,
+                c.contactos AS raw_contacts,
                 COALESCE(c.estado::text, '') AS status
             FROM public.cita c
             LEFT JOIN public.historia h ON h.id = c.historia_id
@@ -235,11 +282,6 @@ final class SigesAppointmentSyncService
             LEFT JOIN public.vw_programacion_medica pm ON pm.programacion_id = c.programacion_id
             LEFT JOIN public.programacion pr ON pr.id = c.programacion_id
             LEFT JOIN public.consultorio co ON co.id = pr.consultorio_id
-            LEFT JOIN public.sede sd ON UPPER(BTRIM(sd.nombre)) = CASE co.codigo_ipress
-                WHEN '00027276' THEN 'LIMA'
-                WHEN '00033237' THEN 'LINCE'
-                ELSE NULL
-            END
             LEFT JOIN LATERAL (
                 SELECT am.motivoconsulta
                 FROM public.admision a
@@ -248,7 +290,10 @@ final class SigesAppointmentSyncService
                 ORDER BY a.id DESC
                 LIMIT 1
             ) atencion ON TRUE
-            WHERE %s
+            -- Solo tipo NORMAL entra a la base local (lista blanca, no solo excluir
+            -- ADICIONAL): SIGES también tiene otros tipos, p. ej. PROCEDIMIENTO, que
+            -- tampoco deben aparecer en la agenda ni en los envíos.
+            WHERE (%s) AND c.tipo::text = 'NORMAL'
             ORDER BY c.id ASC
             SQL;
         $statement = $this->siges->prepare(sprintf($sql, $condition));

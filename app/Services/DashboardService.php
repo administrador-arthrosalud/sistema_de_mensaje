@@ -4,6 +4,7 @@ declare(strict_types=1);
 final class DashboardService
 {
     private const PAGE_SIZE = 25;
+    private const SEDES = ['LIMA', 'LINCE', 'LINCE - CONSULTORIO 3'];
 
     public function __construct(private AppointmentRepository $appointments)
     {
@@ -12,8 +13,10 @@ final class DashboardService
     public function dashboard(array $query): array
     {
         $search = $query['q'] ?? '';
+        $sede = $query['sede'] ?? '';
         $filters = [
             'search' => is_string($search) ? trim($search) : '',
+            'sede' => is_string($sede) && in_array($sede, self::SEDES, true) ? $sede : '',
             'date_from' => $this->validDate($query['desde'] ?? ''),
             'date_to' => $this->validDate($query['hasta'] ?? ''),
         ];
@@ -43,5 +46,10 @@ final class DashboardService
         $date = DateTimeImmutable::createFromFormat('!Y-m-d', $value);
 
         return $date && $date->format('Y-m-d') === $value ? $value : '';
+    }
+
+    public static function sedes(): array
+    {
+        return self::SEDES;
     }
 }

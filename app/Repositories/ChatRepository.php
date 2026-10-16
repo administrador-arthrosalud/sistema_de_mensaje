@@ -11,7 +11,7 @@ final class ChatRepository
     {
         $statement = $this->database->query(
             "SELECT COUNT(*) AS total, COALESCE(MAX(id), 0) AS max_id,
-                    COALESCE(DATE_FORMAT(MAX(created_at), '%Y-%m-%d %H:%i:%s'), '') AS last_at
+                    COALESCE(to_char(MAX(created_at), 'YYYY-MM-DD HH24:MI:SS'), '') AS last_at
              FROM chat_messages"
         );
         $version = $statement->fetch();
@@ -95,7 +95,7 @@ final class ChatRepository
     public function markConversationRead(string $destination): void
     {
         $statement = $this->database->prepare(
-            "UPDATE chat_messages SET read_at = CURRENT_TIMESTAMP
+            "UPDATE chat_messages SET read_at = LOCALTIMESTAMP(0)
              WHERE destination = :destination AND direction = 'inbound' AND read_at IS NULL"
         );
         $statement->execute([':destination' => $destination]);
@@ -107,38 +107,32 @@ final class ChatRepository
      */
     public function insertInbound(string $destination, string $body, ?string $providerMessageId): int
     {
-        try {
-            $statement = $this->database->prepare(
-                "INSERT INTO chat_messages (destination, direction, body, provider_message_id, status)
-                 VALUES (:destination, 'inbound', :body, :provider_message_id, 'received')"
-            );
-            $statement->execute([
-                ':destination' => $destination,
-                ':body' => $body,
-                ':provider_message_id' => $providerMessageId,
-            ]);
+        // Un NULL nunca entra en conflicto, así que los mensajes sin id siempre se insertan.
+        $statement = $this->database->prepare(
+            "INSERT INTO chat_messages (destination, direction, body, provider_message_id, status)
+             VALUES (:destination, 'inbound', :body, :provider_message_id, 'received')
+             ON CONFLICT (provider_message_id) DO NOTHING
+             RETURNING id"
+        );
+        $statement->execute([
+            ':destination' => $destination,
+            ':body' => $body,
+            ':provider_message_id' => $providerMessageId,
+        ]);
 
-            return (int) $this->database->lastInsertId();
-        } catch (PDOException $error) {
-            $isDuplicate = $providerMessageId !== null
-                && isset($error->errorInfo[1])
-                && (int) $error->errorInfo[1] === 1062;
-            if ($isDuplicate) {
-                return 0;
-            }
-            throw $error;
-        }
+        return (int) $statement->fetchColumn();
     }
 
     public function createOutboundAttempt(string $destination, string $body): int
     {
         $statement = $this->database->prepare(
             "INSERT INTO chat_messages (destination, direction, body, status)
-             VALUES (:destination, 'outbound', :body, 'pending')"
+             VALUES (:destination, 'outbound', :body, 'pending')
+             RETURNING id"
         );
         $statement->execute([':destination' => $destination, ':body' => $body]);
 
-        return (int) $this->database->lastInsertId();
+        return (int) $statement->fetchColumn();
     }
 
     public function finishOutboundAttempt(int $id, string $status, ?int $httpStatus = null): void

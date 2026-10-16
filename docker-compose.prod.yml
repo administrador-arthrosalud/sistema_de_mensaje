@@ -1,0 +1,36 @@
+# Ajustes para el servidor oficial (Linux con SELinux, p. ej. Rocky Linux 9).
+# Se usa SIEMPRE junto al archivo base:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# Ver docs/despliegue-produccion.md.
+#
+# ":z" etiqueta las carpetas montadas para que SELinux permita leerlas desde los
+# contenedores. Compose combina estos volúmenes con los del archivo base usando la
+# ruta dentro del contenedor, así que sustituyen a los originales.
+
+x-app-volumes: &app-volumes
+  - ./:/var/www/app:ro,z
+
+services:
+  postgres:
+    volumes:
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro,z
+      - ./docker/postgres/20-roles.sh:/docker-entrypoint-initdb.d/20-roles.sh:ro,z
+      - ./database/grants.sql:/docker-entrypoint-initdb.d/30-grants.sql:ro,z
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  web:
+    volumes: *app-volumes
+    logging: *logging
+
+  sync:
+    volumes: *app-volumes
+    logging: *logging
+
+  webhook-proxy:
+    volumes:
+      - ./docker/nginx/webhook-only.conf:/etc/nginx/conf.d/default.conf:ro,z
+    logging: *logging

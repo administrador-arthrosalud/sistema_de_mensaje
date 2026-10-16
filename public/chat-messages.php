@@ -1,7 +1,9 @@
 <?php
 declare(strict_types=1);
 
-if (!in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true)) {
+require_once __DIR__ . '/../config/access.php';
+
+if (!isLocalRequest()) {
     http_response_code(403);
     exit;
 }
@@ -33,5 +35,5 @@ try {
 } catch (Throwable $error) {
     error_log('No se pudo consultar los chats: ' . get_class($error));
     http_response_code(503);
-    echo json_encode(['error' => 'No se pudo consultar MySQL.']);
+    echo json_encode(['error' => 'No se pudo consultar la base de datos.']);
 }

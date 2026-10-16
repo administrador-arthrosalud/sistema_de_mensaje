@@ -4,6 +4,13 @@ declare(strict_types=1);
 ini_set('display_errors', '0');
 error_reporting(E_ALL);
 
+require_once __DIR__ . '/../config/access.php';
+
+if (!isLocalRequest()) {
+    http_response_code(403);
+    exit('La agenda está limitada al equipo local.');
+}
+
 session_start();
 if (!isset($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -22,7 +29,7 @@ try {
     $service = new DashboardService(new AppointmentRepository(databaseConnection()));
 } catch (Throwable $error) {
     error_log((string) $error);
-    $startupError = 'No se pudo conectar con la base de datos. Revisa la configuración y que MySQL esté activo.';
+    $startupError = 'No se pudo conectar con la base de datos. Revisa la configuración y que PostgreSQL esté activo.';
 }
 
 $controller = new DashboardController($service, $startupError);

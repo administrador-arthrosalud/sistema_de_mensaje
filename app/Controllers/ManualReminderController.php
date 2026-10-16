@@ -35,6 +35,7 @@ final class ManualReminderController
         $dateValue = trim((string) ($input['appointment_date'] ?? ''));
         $timeValue = trim((string) ($input['appointment_time'] ?? ''));
         $doctor = trim((string) ($input['doctor_name'] ?? ''));
+        $sede = trim((string) ($input['sede'] ?? ''));
 
         if ($name === '' || mb_strlen($name, 'UTF-8') > 255) {
             $this->redirectWith('error', 'Ingresa un nombre válido (máximo 255 caracteres).');
@@ -53,6 +54,9 @@ final class ManualReminderController
         if (mb_strlen($doctor, 'UTF-8') > 255) {
             $this->redirectWith('error', 'El nombre del profesional no puede superar 255 caracteres.');
         }
+        if ($sede !== '' && !in_array($sede, ['LIMA', 'LINCE', 'LINCE - CONSULTORIO 3'], true)) {
+            $this->redirectWith('error', 'La sede indicada no es válida.');
+        }
 
         try {
             $this->contacts->create([
@@ -61,6 +65,7 @@ final class ManualReminderController
                 'appointment_date' => $dateValue,
                 'appointment_time' => $time->format('H:i:s'),
                 'doctor_name' => $doctor,
+                'sede' => $sede,
             ]);
         } catch (Throwable $error) {
             error_log('No se pudo guardar un contacto temporal.');
@@ -70,8 +75,11 @@ final class ManualReminderController
         $this->redirectWith('success', 'Contacto temporal agregado. Revisa sus datos antes de enviar el recordatorio.');
     }
 
-    public function send(array $input): never
+    public function send(array $input, array $files = []): never
     {
+        if (MessageAttachment::requestExceededPostLimit()) {
+            $this->redirectWith('error', 'La imagen es demasiado grande; el máximo es 5 MB.');
+        }
         $this->verifyCsrf($input);
         if (!ChatbotApiClient::isConfigured()) {
             $this->redirectWith('error', 'Configura CHATBOT_LINE_KEY antes de enviar recordatorios.');
@@ -94,10 +102,11 @@ final class ManualReminderController
         $attemptId = null;
         $apiAccepted = false;
         try {
+            $attachment = MessageAttachment::fromUpload($files['attachment'] ?? null);
             $chatbot = ChatbotApiClient::fromEnvironment();
             $destination = $chatbot->normalizeDestination((string) $contact['destination']);
             $attemptId = $this->contacts->createReminderAttempt($contact, $destination);
-            $result = $chatbot->sendText($destination, $message);
+            $result = $chatbot->sendMessage($destination, $message, $attachment);
             $apiAccepted = true;
             $this->contacts->finishReminderAttempt($attemptId, 'sent', (int) $result['http_status']);
             $this->redirectWith('success', 'Gestionalo aceptó el recordatorio. Quedó registrado en Contactos enviados.');

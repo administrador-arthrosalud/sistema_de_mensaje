@@ -5,7 +5,9 @@ ini_set('display_errors', '0');
 error_reporting(E_ALL);
 session_start();
 
-if (!in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true)) {
+require_once __DIR__ . '/../config/access.php';
+
+if (!isLocalRequest()) {
     http_response_code(403);
     exit('Los recordatorios temporales están limitados al equipo local.');
 }
@@ -17,6 +19,7 @@ if (!isset($_SESSION['csrf_token'])) {
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../app/Repositories/ManualContactRepository.php';
 require_once __DIR__ . '/../app/Services/ChatbotApiClient.php';
+require_once __DIR__ . '/../app/Services/MessageAttachment.php';
 require_once __DIR__ . '/../app/Repositories/ChatRepository.php';
 require_once __DIR__ . '/../app/Controllers/ManualReminderController.php';
 
@@ -27,7 +30,7 @@ try {
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         match ($action) {
             'create' => $controller->create($_POST),
-            'send' => $controller->send($_POST),
+            'send' => $controller->send($_POST, $_FILES),
             'delete' => $controller->delete($_POST),
             default => (static function (): never {
                 http_response_code(404);
@@ -46,5 +49,5 @@ try {
 } catch (Throwable $error) {
     error_log('No se pudo cargar el módulo de recordatorios temporales: ' . get_class($error));
     http_response_code(503);
-    echo 'No se pudo cargar el módulo. Revisa la conexión local con MySQL.';
+    echo 'No se pudo cargar el módulo. Revisa la conexión local con PostgreSQL.';
 }

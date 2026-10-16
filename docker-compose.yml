@@ -1,0 +1,105 @@
+# Todo el sistema en Docker: base PostgreSQL local (no es SIGES), aplicación web
+# (PHP + Apache) y worker de sincronización. Los puertos solo se publican en
+# 127.0.0.1. Las contraseñas de la base se leen de .env (ignorado por Git) y el
+# resto de la configuración de config/local.php (también ignorado).
+#
+# La primera vez que se crea el volumen de la base se aplican, en orden, el
+# esquema, los roles y los permisos. Para repetirlo hay que borrar el volumen
+# (pierde todos los datos locales).
+
+x-php-app: &php-app
+  build: ./docker/php
+  image: siges-dashboard-php:local
+  restart: unless-stopped
+  volumes:
+    - ./:/var/www/app:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+  environment: &php-env
+    # Dentro de la red de Docker la base local es el servicio "postgres". Estas
+    # variables tienen prioridad sobre config/local.php.
+    DB_HOST: postgres
+    DB_PORT: "5432"
+    SIGES_SYNC_DB_HOST: postgres
+    SIGES_SYNC_DB_PORT: "5432"
+    APP_TIMEZONE: America/Lima
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: siges-dashboard-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: siges_dashboard
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en .env}
+      SIGES_APP_PASSWORD: ${SIGES_APP_PASSWORD:?Define SIGES_APP_PASSWORD en .env}
+      SIGES_SYNC_PASSWORD: ${SIGES_SYNC_PASSWORD:?Define SIGES_SYNC_PASSWORD en .env}
+      TZ: America/Lima
+    ports:
+      # En un servidor que ya tiene PostgreSQL en 5432 (p. ej. SIGES) usa otro
+      # puerto con DB_PUBLISH_PORT en .env.
+      - "127.0.0.1:${DB_PUBLISH_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+      - ./docker/postgres/20-roles.sh:/docker-entrypoint-initdb.d/20-roles.sh:ro
+      - ./database/grants.sql:/docker-entrypoint-initdb.d/30-grants.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d siges_dashboard"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    <<: *php-app
+    container_name: siges-dashboard-web
+    environment:
+      <<: *php-env
+      # Puerta de enlace de la red de Docker (ver networks): por ahí llegan las
+      # peticiones del navegador del equipo a través del puerto publicado.
+      LOCAL_ACCESS_EXTRA_IPS: ${DOCKER_GATEWAY_IP:-172.28.0.1}
+    ports:
+      - "127.0.0.1:${WEB_PUBLISH_PORT:-8082}:80"
+
+  sync:
+    <<: *php-app
+    container_name: siges-dashboard-sync
+    command: ["php", "scripts/sync-siges.php"]
+    environment:
+      <<: *php-env
+      # Por defecto SIGES se alcanza en el propio equipo anfitrión: en local es
+      # el túnel SSH de Windows y, en un servidor que también aloja SIGES, su
+      # PostgreSQL. Si SIGES está en otro servidor, define SIGES_PG_HOST en .env
+      # con su IP. El puerto se toma de SIGES_PG_PORT en config/local.php.
+      SIGES_PG_HOST: ${SIGES_PG_HOST:-host.docker.internal}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Expone SOLO /chat-webhook.php a lo que apunte un túnel público o un dominio,
+  # nunca el resto de la app. No arranca con "docker compose up -d": requiere
+  # --profile webhook. Ver docs/operacion-local.md.
+  webhook-proxy:
+    image: nginx:1.27-alpine
+    container_name: siges-dashboard-webhook-proxy
+    restart: unless-stopped
+    profiles: ["webhook"]
+    depends_on:
+      - web
+    volumes:
+      - ./docker/nginx/webhook-only.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "127.0.0.1:${WEBHOOK_PROXY_PORT:-8090}:80"
+
+networks:
+  default:
+    name: siges-dashboard
+    ipam:
+      config:
+        # Cambia ambas en .env si la subred ya está en uso en el servidor.
+        - subnet: ${DOCKER_SUBNET:-172.28.0.0/24}
+          gateway: ${DOCKER_GATEWAY_IP:-172.28.0.1}
+
+volumes:
+  pgdata:

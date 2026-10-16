@@ -40,19 +40,67 @@
         }
     };
 
+    // Texto inicial del recordatorio. La persona lo revisa y puede editarlo antes de enviar.
+    const CLINIC_NAME = 'Clínica Arthrosalud';
+    // appointment.sede_nombre solo trae "LIMA" o "LINCE" (ver AppointmentRepository); la
+    // dirección completa se arma aquí porque no viene de la base de datos.
+    const SEDE_ADDRESSES = {
+        LIMA: 'Jr. Sánchez Pinillos 188, Lima 15082',
+        LINCE: 'Av. P.º de la República 2772, Lince 15046',
+        'LINCE - CONSULTORIO 3': 'Jr. Joaquín Bernal 344, Lince',
+    };
+    const sedeLine = (sede) => {
+        if (!sede) return null;
+        const key = String(sede).trim().toUpperCase();
+        const address = SEDE_ADDRESSES[key];
+        return address ? `📍*Sede ${key}:* ${address}` : `📍*Sede:* ${titleCase(sede)}`;
+    };
+    const lowerWords = new Set(['de', 'del', 'la', 'las', 'los', 'y']);
+    const titleCase = (value) => String(value || '').trim().toLocaleLowerCase('es-PE').split(/\s+/)
+        .map((word, index) => (index > 0 && lowerWords.has(word)) ? word : word.charAt(0).toLocaleUpperCase('es-PE') + word.slice(1))
+        .join(' ');
+    const time12h = (value) => {
+        const match = /^(\d{1,2}):(\d{2})/.exec(String(value || ''));
+        if (!match) return String(value || '');
+        const hours = Number(match[1]);
+        return `${hours % 12 || 12}:${match[2]} ${hours < 12 ? 'a. m.' : 'p. m.'}`;
+    };
+    // Sin las opciones numeradas (1/2/3) hasta que Gestionalo confirme el
+    // webhook de respuestas entrantes: pedirlas sería engañoso si nadie las lee.
+    // Ver docs/operacion-local.md, sección "Mensajes entrantes (webhook)".
+    const buildReminderMessage = ({ patient, date, time, doctor, sede }) => [
+        `*Hola, ${titleCase(patient)}.*`,
+        `Le recordamos que tiene una cita programada en la ${CLINIC_NAME}.`,
+        '',
+        `📅*Fecha:* ${date}`,
+        `🕐*Hora:* ${time12h(time)}`,
+        ...(doctor ? [`🩺*Médico:* Dr(a). ${titleCase(doctor)}`] : []),
+        ...(sedeLine(sede) ? [sedeLine(sede)] : []),
+    ].join('\n');
+
+    // Validación previa de la imagen opcional; PHP vuelve a validarla al recibirla.
+    document.querySelectorAll('input[type="file"][name="attachment"]').forEach((input) => {
+        input.addEventListener('change', () => {
+            const file = input.files?.[0];
+            if (!file) return;
+            if (!['image/png', 'image/jpeg'].includes(file.type)) {
+                window.alert('Solo se permiten imágenes PNG o JPG.');
+                input.value = '';
+            } else if (file.size > 5 * 1024 * 1024) {
+                window.alert('La imagen debe pesar como máximo 5 MB.');
+                input.value = '';
+            }
+        });
+    });
+
     reloadAppointments?.addEventListener('click', () => window.location.reload());
     window.setInterval(checkAppointmentUpdates, 3000);
 
-    const form = document.querySelector('#filter-form');
-    const search = form?.querySelector('input[type="search"]');
-
-    if (form && search) {
-        let timer;
-        search.addEventListener('input', () => {
-            window.clearTimeout(timer);
-            timer = window.setTimeout(() => form.requestSubmit(), 450);
-        });
-    }
+    // La búsqueda de texto se envía con Enter (no al escribir, para no recargar a
+    // mitad de palabra). Sede y fechas son selecciones puntuales, no texto: se
+    // envían solas en cuanto cambian, sin necesidad de un botón "Filtrar".
+    document.querySelectorAll('#filter-form select[name="sede"], #filter-form input[name="desde"], #filter-form input[name="hasta"]')
+        .forEach((field) => field.addEventListener('change', () => field.form?.requestSubmit()));
 
     const manualDialog = document.querySelector('#manual-reminder-dialog');
     const manualForm = document.querySelector('#send-manual-reminder-form');
@@ -64,13 +112,16 @@
     if (manualDialog && manualForm && manualContactId && manualDestination && manualMessage) {
         document.querySelectorAll('[data-open-manual-reminder]').forEach((button) => {
             button.addEventListener('click', () => {
-                const patient = button.dataset.patient || '';
-                const date = button.dataset.date || '';
-                const time = button.dataset.time || '';
                 manualForm.reset();
                 manualContactId.value = button.dataset.contactId || '';
                 manualDestination.value = button.dataset.destination || '';
-                manualMessage.value = `Hola ${patient}, te recordamos tu cita médica programada para el ${date} a las ${time}. Si necesitas reprogramar, comunícate con la clínica.`;
+                manualMessage.value = buildReminderMessage({
+                    patient: button.dataset.patient,
+                    date: button.dataset.date,
+                    time: button.dataset.time,
+                    doctor: button.dataset.doctor,
+                    sede: button.dataset.sede,
+                });
                 manualDialog.showModal();
             });
         });
@@ -103,12 +154,15 @@
 
     document.querySelectorAll('[data-open-reminder]').forEach((button) => {
         button.addEventListener('click', () => {
-            const patient = button.dataset.patient || '';
-            const date = button.dataset.date || '';
-            const time = button.dataset.time || '';
             reminderForm.reset();
             appointmentId.value = button.dataset.appointmentId || '';
-            messageField.value = `Hola ${patient}, te recordamos tu cita médica programada para el ${date} a las ${time}. Si necesitas reprogramar, comunícate con la clínica.`;
+            messageField.value = buildReminderMessage({
+                patient: button.dataset.patient,
+                date: button.dataset.date,
+                time: button.dataset.time,
+                doctor: button.dataset.doctor,
+                sede: button.dataset.sede,
+            });
             dialog.showModal();
         });
     });

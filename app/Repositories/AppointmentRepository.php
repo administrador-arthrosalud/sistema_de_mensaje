@@ -16,12 +16,16 @@ final class AppointmentRepository
         return (int) $statement->fetchColumn();
     }
 
+    /** Citas cuya fecha y hora aún no han pasado (hora de la sesión: APP_TIMEZONE). */
+    private const NOT_PAST = '(appointment_date > CURRENT_DATE OR (appointment_date = CURRENT_DATE AND appointment_time >= LOCALTIME))';
+
     public function pendingVersion(): string
     {
+        // El total cambia cuando una cita queda en el pasado, así el dashboard se refresca solo.
         $statement = $this->database->query(
             "SELECT COUNT(*) AS total, COALESCE(MAX(id), 0) AS max_id,
-                    COALESCE(DATE_FORMAT(MAX(updated_at), '%Y-%m-%d %H:%i:%s'), '') AS last_update
-             FROM appointments WHERE status = 'RESERVADO' AND siges_cita_id IS NOT NULL"
+                    COALESCE(to_char(MAX(updated_at), 'YYYY-MM-DD HH24:MI:SS'), '') AS last_update
+             FROM appointments WHERE status = 'RESERVADO' AND siges_cita_id IS NOT NULL AND " . self::NOT_PAST
         );
         $version = $statement->fetch();
 
@@ -38,7 +42,7 @@ final class AppointmentRepository
         $sql = "SELECT
                     COUNT(*) AS total,
                     COUNT(DISTINCT NULLIF(TRIM(doctor_name), '')) AS doctors,
-                    COUNT(DISTINCT NULLIF(TRIM(sede_nombre), '')) AS sites,
+                    COUNT(DISTINCT NULLIF(NULLIF(TRIM(sede_nombre), ''), 'SEDE NO MAPEADA')) AS sites,
                     SUM(CASE
                         WHEN NULLIF(TRIM(appointment_note), '') IS NOT NULL
                          AND TRIM(appointment_note) <> 'Sin observación registrada'
@@ -64,7 +68,7 @@ final class AppointmentRepository
         [$where, $parameters] = $this->buildWhere($filters);
         $sql = "SELECT a.id, a.patient_name, a.appointment_date, a.appointment_time, a.doctor_name,
                        a.specialty, a.sede_nombre, a.consultorio, a.modulo, a.codigo_ipress,
-                       a.appointment_note, a.visit_reason,
+                       a.appointment_note, a.visit_reason, a.destination,
                        (SELECT rm.status FROM reminder_messages rm WHERE rm.appointment_id = a.id ORDER BY rm.id DESC LIMIT 1) AS reminder_status,
                        (SELECT rm.sent_at FROM reminder_messages rm WHERE rm.appointment_id = a.id AND rm.status = 'sent' ORDER BY rm.id DESC LIMIT 1) AS reminder_sent_at
                 FROM appointments a
@@ -85,10 +89,69 @@ final class AppointmentRepository
     public function findPendingById(int $id): ?array
     {
         $statement = $this->database->prepare(
-            "SELECT id, patient_name, appointment_date, appointment_time, doctor_name
+            "SELECT id, patient_name, appointment_date, appointment_time, doctor_name, destination
              FROM appointments
              WHERE id = :id AND status = 'RESERVADO' AND siges_cita_id IS NOT NULL
-               AND appointment_date >= CURRENT_DATE
+               AND " . self::NOT_PAST . "
+             LIMIT 1"
+        );
+        $statement->execute([':id' => $id]);
+        $appointment = $statement->fetch();
+
+        return $appointment === false ? null : $appointment;
+    }
+
+    /**
+     * Citas RESERVADO de una fecha exacta con celular extraído de SIGES y sin
+     * un envío ya aceptado. Es la lista que revisa el personal antes del envío
+     * masivo; cada fila sigue siendo editable/excluible antes de confirmar.
+     */
+    public function findReadyForBulkReminder(string $date): array
+    {
+        $statement = $this->database->prepare(
+            "SELECT id, patient_name, appointment_date, appointment_time, doctor_name, sede_nombre, destination
+             FROM appointments a
+             WHERE status = 'RESERVADO' AND siges_cita_id IS NOT NULL AND destination IS NOT NULL
+               AND appointment_date = :date
+               AND " . self::NOT_PAST . "
+               AND NOT EXISTS (
+                   SELECT 1 FROM reminder_messages rm WHERE rm.appointment_id = a.id AND rm.status = 'sent'
+               )
+             ORDER BY appointment_time ASC, patient_name ASC"
+        );
+        $statement->execute([':date' => $date]);
+
+        return $statement->fetchAll();
+    }
+
+    /** Para que el personal sepa cuántas citas de la fecha necesitan el formulario manual. */
+    public function countNeedingManualDestination(string $date): int
+    {
+        $statement = $this->database->prepare(
+            "SELECT COUNT(*) FROM appointments a
+             WHERE status = 'RESERVADO' AND siges_cita_id IS NOT NULL AND destination IS NULL
+               AND appointment_date = :date
+               AND " . self::NOT_PAST . "
+               AND NOT EXISTS (
+                   SELECT 1 FROM reminder_messages rm WHERE rm.appointment_id = a.id AND rm.status = 'sent'
+               )"
+        );
+        $statement->execute([':date' => $date]);
+
+        return (int) $statement->fetchColumn();
+    }
+
+    /** Vuelve a validar una cita puntual justo antes de enviarle, por si cambió entre que se listó y se confirmó. */
+    public function findReadyForBulkReminderById(int $id): ?array
+    {
+        $statement = $this->database->prepare(
+            "SELECT id, patient_name, appointment_date, appointment_time, doctor_name, sede_nombre, destination
+             FROM appointments a
+             WHERE id = :id AND status = 'RESERVADO' AND siges_cita_id IS NOT NULL AND destination IS NOT NULL
+               AND " . self::NOT_PAST . "
+               AND NOT EXISTS (
+                   SELECT 1 FROM reminder_messages rm WHERE rm.appointment_id = a.id AND rm.status = 'sent'
+               )
              LIMIT 1"
         );
         $statement->execute([':id' => $id]);
@@ -102,7 +165,8 @@ final class AppointmentRepository
         $statement = $this->database->prepare(
             "INSERT INTO reminder_messages
                 (appointment_id, destination, patient_name, appointment_date, appointment_time, doctor_name, status)
-             VALUES (:appointment_id, :destination, :patient_name, :appointment_date, :appointment_time, :doctor_name, 'pending')"
+             VALUES (:appointment_id, :destination, :patient_name, :appointment_date, :appointment_time, :doctor_name, 'pending')
+             RETURNING id"
         );
         $statement->execute([
             ':appointment_id' => $appointment['id'],
@@ -113,7 +177,7 @@ final class AppointmentRepository
             ':doctor_name' => $appointment['doctor_name'],
         ]);
 
-        return (int) $this->database->lastInsertId();
+        return (int) $statement->fetchColumn();
     }
 
     public function finishReminderAttempt(int $id, string $status, ?int $httpStatus = null): void
@@ -124,7 +188,7 @@ final class AppointmentRepository
         $statement = $this->database->prepare(
             "UPDATE reminder_messages
              SET status = :status, http_status = :http_status,
-                 sent_at = CASE WHEN :status_for_date = 'sent' THEN CURRENT_TIMESTAMP ELSE NULL END
+                 sent_at = CASE WHEN CAST(:status_for_date AS text) = 'sent' THEN LOCALTIMESTAMP(0) ELSE NULL END
              WHERE id = :id AND status = 'pending'"
         );
         $statement->execute([
@@ -169,7 +233,7 @@ final class AppointmentRepository
         $clauses = ["status = 'sent'"];
         $parameters = [];
         if ($filters['search'] !== '') {
-            $clauses[] = '(patient_name LIKE :search_patient OR destination LIKE :search_destination OR doctor_name LIKE :search_doctor)';
+            $clauses[] = '(patient_name ILIKE :search_patient OR destination ILIKE :search_destination OR doctor_name ILIKE :search_doctor)';
             $term = '%' . $filters['search'] . '%';
             $parameters[':search_patient'] = $term;
             $parameters[':search_destination'] = $term;
@@ -180,7 +244,7 @@ final class AppointmentRepository
             $parameters[':date_from'] = $filters['date_from'] . ' 00:00:00';
         }
         if ($filters['date_to'] !== '') {
-            $clauses[] = 'sent_at < DATE_ADD(:date_to, INTERVAL 1 DAY)';
+            $clauses[] = 'sent_at < CAST(:date_to AS date) + 1';
             $parameters[':date_to'] = $filters['date_to'];
         }
 
@@ -189,15 +253,26 @@ final class AppointmentRepository
 
     private function buildWhere(array $filters): array
     {
-        $clauses = ["status = 'RESERVADO'", 'siges_cita_id IS NOT NULL', 'appointment_date >= CURRENT_DATE'];
+        $clauses = ["status = 'RESERVADO'", 'siges_cita_id IS NOT NULL', self::NOT_PAST];
         $parameters = [];
 
         if ($filters['search'] !== '') {
-            foreach (['patient_name', 'doctor_name', 'specialty', 'sede_nombre', 'consultorio', 'modulo', 'codigo_ipress', 'appointment_note', 'visit_reason'] as $index => $column) {
-                $placeholder = ':search_' . $index;
-                $clauses[] = "{$column} LIKE {$placeholder}";
-                $parameters[$placeholder] = '%' . $filters['search'] . '%';
+            // Cada palabra debe aparecer en alguna de las columnas (OR entre columnas, AND entre palabras).
+            $columns = ['patient_name', 'doctor_name', 'specialty', 'sede_nombre', 'consultorio', 'modulo', 'codigo_ipress', 'appointment_note', 'visit_reason'];
+            $words = array_slice(preg_split('/\s+/u', $filters['search'], -1, PREG_SPLIT_NO_EMPTY) ?: [], 0, 5);
+            foreach ($words as $wordIndex => $word) {
+                $alternatives = [];
+                foreach ($columns as $columnIndex => $column) {
+                    $placeholder = ':search_' . $wordIndex . '_' . $columnIndex;
+                    $alternatives[] = "unaccent({$column}) ILIKE unaccent({$placeholder})";
+                    $parameters[$placeholder] = '%' . addcslashes($word, '%_\\') . '%';
+                }
+                $clauses[] = '(' . implode(' OR ', $alternatives) . ')';
             }
+        }
+        if ($filters['sede'] !== '') {
+            $clauses[] = 'sede_nombre = :sede';
+            $parameters[':sede'] = $filters['sede'];
         }
         if ($filters['date_from'] !== '') {
             $clauses[] = 'appointment_date >= :date_from';

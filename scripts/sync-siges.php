@@ -6,6 +6,7 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 
+require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../app/Services/SigesAppointmentSyncService.php';
 
 $localPath = __DIR__ . '/../config/local.php';
@@ -27,13 +28,15 @@ $pgUser = $read('SIGES_PG_USER');
 $pgPassword = $read('SIGES_PG_PASSWORD');
 $pgPort = $read('SIGES_PG_PORT', '5432');
 $pgSslMode = $read('SIGES_PG_SSLMODE', 'prefer');
-$mysqlHost = $read('SIGES_SYNC_DB_HOST', $read('DB_HOST', '127.0.0.1'));
-$mysqlPort = $read('SIGES_SYNC_DB_PORT', $read('DB_PORT', '3306'));
-$mysqlDatabase = $read('SIGES_SYNC_DB_NAME', $read('DB_NAME', 'siges_dashboard'));
-$mysqlUser = $read('SIGES_SYNC_DB_USER');
-$mysqlPassword = $read('SIGES_SYNC_DB_PASSWORD');
+$localHost = $read('SIGES_SYNC_DB_HOST', $read('DB_HOST', '127.0.0.1'));
+$localPort = $read('SIGES_SYNC_DB_PORT', $read('DB_PORT', '5432'));
+$localDatabase = $read('SIGES_SYNC_DB_NAME', $read('DB_NAME', 'siges_dashboard'));
+$localUser = $read('SIGES_SYNC_DB_USER');
+$localPassword = $read('SIGES_SYNC_DB_PASSWORD');
+$localSslMode = $read('DB_SSLMODE', 'prefer');
+$timezone = $read('APP_TIMEZONE', 'America/Lima');
 
-if ($pgHost === '' || $pgUser === '' || $pgPassword === '' || $mysqlUser === '' || $mysqlPassword === '') {
+if ($pgHost === '' || $pgUser === '' || $pgPassword === '' || $localUser === '' || $localPassword === '') {
     fwrite(STDERR, "Configura SIGES_PG_HOST, SIGES_PG_USER, SIGES_PG_PASSWORD y las credenciales SIGES_SYNC_DB_* en config/local.php.\n");
     exit(1);
 }
@@ -43,19 +46,19 @@ if (!extension_loaded('pdo_pgsql')) {
     exit(1);
 }
 
-$createService = static function () use ($pgHost, $pgPort, $pgDatabase, $pgUser, $pgPassword, $pgSslMode, $mysqlHost, $mysqlPort, $mysqlDatabase, $mysqlUser, $mysqlPassword): SigesAppointmentSyncService {
-    $siges = new PDO(
-        sprintf('pgsql:host=%s;port=%s;dbname=%s;sslmode=%s', $pgHost, $pgPort, $pgDatabase, $pgSslMode),
-        $pgUser,
-        $pgPassword,
-        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]
-    );
-    $local = new PDO(
-        sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4', $mysqlHost, $mysqlPort, $mysqlDatabase),
-        $mysqlUser,
-        $mysqlPassword,
-        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC, PDO::ATTR_EMULATE_PREPARES => false]
-    );
+// La base local nunca debe ser la de SIGES: el worker escribe en ella.
+if ($localHost === $pgHost && $localPort === $pgPort && $localDatabase === $pgDatabase) {
+    fwrite(STDERR, "La base local (SIGES_SYNC_DB_* / DB_*) apunta a la misma base que SIGES. Usa una base propia, por ejemplo siges_dashboard.\n");
+    exit(1);
+}
+
+// Ambas sesiones usan la misma zona horaria para que CURRENT_DATE coincida en SIGES y en la base local.
+$createService = static function () use ($pgHost, $pgPort, $pgDatabase, $pgUser, $pgPassword, $pgSslMode, $localHost, $localPort, $localDatabase, $localUser, $localPassword, $localSslMode, $timezone): SigesAppointmentSyncService {
+    $siges = postgresConnection($pgHost, $pgPort, $pgDatabase, $pgUser, $pgPassword, $pgSslMode, $timezone);
+    // Segunda barrera además del rol de solo lectura: PostgreSQL rechaza cualquier
+    // escritura hecha desde esta sesión de SIGES.
+    $siges->exec('SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY');
+    $local = postgresConnection($localHost, $localPort, $localDatabase, $localUser, $localPassword, $localSslMode, $timezone);
 
     return new SigesAppointmentSyncService($siges, $local);
 };

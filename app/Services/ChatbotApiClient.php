@@ -84,6 +84,22 @@ final class ChatbotApiClient
         return $this->post($destination, ['message' => $message]);
     }
 
+    /** Envía solo texto o, si hay imagen adjunta, la imagen con el texto como caption. */
+    public function sendMessage(string $destination, string $message, ?MessageAttachment $attachment = null): array
+    {
+        if ($attachment === null) {
+            return $this->sendText($destination, $message);
+        }
+
+        return $this->sendMedia(
+            $destination,
+            trim($message),
+            $attachment->mimeType,
+            $attachment->title,
+            $attachment->base64,
+        );
+    }
+
     /** Envía un archivo ya codificado en base64. */
     public function sendMedia(
         string $destination,

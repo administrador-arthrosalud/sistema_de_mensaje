@@ -11,8 +11,9 @@ final class ManualContactRepository
     {
         $statement = $this->database->prepare(
             'INSERT INTO manual_contacts
-                (patient_name, destination, appointment_date, appointment_time, doctor_name)
-             VALUES (:patient_name, :destination, :appointment_date, :appointment_time, :doctor_name)'
+                (patient_name, destination, appointment_date, appointment_time, doctor_name, sede)
+             VALUES (:patient_name, :destination, :appointment_date, :appointment_time, :doctor_name, :sede)
+             RETURNING id'
         );
         $statement->execute([
             ':patient_name' => $contact['patient_name'],
@@ -20,16 +21,17 @@ final class ManualContactRepository
             ':appointment_date' => $contact['appointment_date'],
             ':appointment_time' => $contact['appointment_time'],
             ':doctor_name' => $contact['doctor_name'],
+            ':sede' => $contact['sede'] !== '' ? $contact['sede'] : null,
         ]);
 
-        return (int) $this->database->lastInsertId();
+        return (int) $statement->fetchColumn();
     }
 
     public function findAll(): array
     {
         return $this->database->query(
             "SELECT c.id, c.patient_name, c.destination, c.appointment_date,
-                    c.appointment_time, c.doctor_name, c.created_at,
+                    c.appointment_time, c.doctor_name, c.sede, c.created_at,
                     (SELECT rm.status FROM reminder_messages rm
                      WHERE rm.origin = 'manual' AND rm.manual_contact_id = c.id
                      ORDER BY rm.id DESC LIMIT 1) AS reminder_status,
@@ -44,7 +46,7 @@ final class ManualContactRepository
     public function findById(int $id): ?array
     {
         $statement = $this->database->prepare(
-            'SELECT id, patient_name, destination, appointment_date, appointment_time, doctor_name
+            'SELECT id, patient_name, destination, appointment_date, appointment_time, doctor_name, sede
              FROM manual_contacts WHERE id = :id LIMIT 1'
         );
         $statement->execute([':id' => $id]);
@@ -60,7 +62,8 @@ final class ManualContactRepository
                 (appointment_id, origin, manual_contact_id, destination, patient_name,
                  appointment_date, appointment_time, doctor_name, status)
              VALUES (0, 'manual', :manual_contact_id, :destination, :patient_name,
-                     :appointment_date, :appointment_time, :doctor_name, 'pending')"
+                     :appointment_date, :appointment_time, :doctor_name, 'pending')
+             RETURNING id"
         );
         $statement->execute([
             ':manual_contact_id' => $contact['id'],
@@ -71,7 +74,7 @@ final class ManualContactRepository
             ':doctor_name' => $contact['doctor_name'],
         ]);
 
-        return (int) $this->database->lastInsertId();
+        return (int) $statement->fetchColumn();
     }
 
     public function finishReminderAttempt(int $id, string $status, ?int $httpStatus = null): void
@@ -82,7 +85,7 @@ final class ManualContactRepository
         $statement = $this->database->prepare(
             "UPDATE reminder_messages
              SET status = :status, http_status = :http_status,
-                 sent_at = CASE WHEN :status_for_date = 'sent' THEN CURRENT_TIMESTAMP ELSE NULL END
+                 sent_at = CASE WHEN CAST(:status_for_date AS text) = 'sent' THEN LOCALTIMESTAMP(0) ELSE NULL END
              WHERE id = :id AND origin = 'manual' AND status = 'pending'"
         );
         $statement->execute([

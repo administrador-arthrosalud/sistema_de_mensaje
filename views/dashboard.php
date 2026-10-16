@@ -31,6 +31,10 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.8 20c.7-3.7 2.8-5.5 6.2-5.5 2 0 3.5.6 4.6 1.8M17.5 13v8M13.5 17h8"/></svg>
             <span>Recordatorios temporales</span>
         </a>
+        <a class="nav-item" href="bulk-reminders.php">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h16M4 12h16M4 16.5h10"/><circle cx="19" cy="16.5" r="2.2"/></svg>
+            <span>Envío masivo</span>
+        </a>
         <a class="nav-item" href="chats.php">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v10.5H10l-4.3 3.4v-3.4H4Z"/><path d="M8 9.7h8M8 12.7h5"/></svg>
             <span>Chats</span>
@@ -52,7 +56,7 @@
                     <h1>Citas pendientes</h1>
                     <p class="heading-copy">Consulta las próximas atenciones programadas y el profesional asignado.</p>
                 </div>
-                <div class="date-chip"><span class="calendar-icon" aria-hidden="true">▦</span> <?= $errorMessage === '' ? 'Datos cargados desde MySQL' : 'MySQL desconectado' ?></div>
+                <div class="date-chip"><span class="calendar-icon" aria-hidden="true">▦</span> <?= $errorMessage === '' ? 'Datos cargados desde PostgreSQL' : 'Base de datos desconectada' ?></div>
             </section>
 
             <?php if ($errorMessage !== ''): ?>
@@ -99,12 +103,20 @@
                 <form class="filters" method="get" action="index.php" id="filter-form">
                     <label class="search-field">
                         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.6"/><path d="m16 16 4.2 4.2"/></svg>
-                        <input type="search" name="q" value="<?= $escape($filters['search']) ?>" placeholder="Buscar paciente, médico o motivo" aria-label="Buscar en citas">
+                        <input type="search" name="q" value="<?= $escape($filters['search']) ?>" placeholder="Buscar paciente, médico, sede o motivo y presiona Enter" aria-label="Buscar en citas">
+                    </label>
+                    <label class="date-field"><span>Sede</span>
+                        <select name="sede">
+                            <option value="">Todas</option>
+                            <?php foreach ($sedes as $sedeOption): ?>
+                                <option value="<?= $escape($sedeOption) ?>" <?= $filters['sede'] === $sedeOption ? 'selected' : '' ?>><?= $escape($sedeOption) ?></option>
+                            <?php endforeach; ?>
+                        </select>
                     </label>
                     <label class="date-field"><span>Desde</span><input type="date" name="desde" min="<?= $escape($today) ?>" value="<?= $escape($filters['date_from']) ?>"></label>
                     <label class="date-field"><span>Hasta</span><input type="date" name="hasta" min="<?= $escape($today) ?>" value="<?= $escape($filters['date_to']) ?>"></label>
-                    <button class="button-primary" type="submit">Filtrar</button>
-                    <?php if ($filters['search'] !== '' || $filters['date_from'] !== '' || $filters['date_to'] !== ''): ?>
+                    <button class="visually-hidden" type="submit" tabindex="-1" aria-hidden="true">Filtrar</button>
+                    <?php if ($filters['search'] !== '' || $filters['sede'] !== '' || $filters['date_from'] !== '' || $filters['date_to'] !== ''): ?>
                         <a class="clear-link" href="index.php">Limpiar</a>
                     <?php endif; ?>
                 </form>
@@ -170,6 +182,8 @@
                                             data-patient="<?= $escape($appointment['patient_name']) ?>"
                                             data-date="<?= $escape($formatDate($appointment['appointment_date'])) ?>"
                                             data-time="<?= $escape(substr((string) $appointment['appointment_time'], 0, 5)) ?>"
+                                            data-doctor="<?= $escape($appointment['doctor_name']) ?>"
+                                            data-sede="<?= $escape($appointment['sede_nombre'] === 'SEDE NO MAPEADA' ? '' : $appointment['sede_nombre']) ?>"
                                         >Recordar</button>
                                     </td>
                                 </tr>
@@ -185,14 +199,17 @@
                         <button class="dialog-close" type="button" id="close-reminder" aria-label="Cerrar">×</button>
                     </div>
                     <p class="dialog-description">Revisa el destino y el mensaje antes de enviarlo.</p>
-                    <form action="send-reminder.php" method="post" class="send-form" id="send-reminder-form">
+                    <form action="send-reminder.php" method="post" enctype="multipart/form-data" class="send-form" id="send-reminder-form">
                         <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
                         <input type="hidden" name="appointment_id" id="reminder-appointment-id">
                         <label>Celular de destino (9 dígitos; se agrega 51)
                             <input type="tel" name="destination" inputmode="tel" autocomplete="off" placeholder="996080370" pattern="[0-9+() -]{8,20}" required>
                         </label>
                         <label>Mensaje (puedes editarlo)
-                            <textarea name="message" id="reminder-message" rows="5" maxlength="1000" required></textarea>
+                            <textarea name="message" id="reminder-message" rows="15" maxlength="1000" required></textarea>
+                        </label>
+                        <label>Imagen (opcional, PNG o JPG hasta 5 MB)
+                            <input type="file" name="attachment" accept="image/png,image/jpeg">
                         </label>
                         <label class="transmission-consent"><input type="checkbox" name="confirm_transmission" value="yes" required> Confirmo enviar el texto mostrado al celular por Gestionalo.</label>
                         <button class="button-primary send-button" type="submit" <?= $chatbotConfigured ? '' : 'disabled' ?>>Enviar</button>

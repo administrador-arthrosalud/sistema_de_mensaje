@@ -35,14 +35,17 @@ final class ChatController
             $chatUnread = array_sum(array_map(static fn (array $row): int => (int) $row['unread'], $conversations));
         } catch (Throwable $error) {
             error_log('No se pudo cargar el módulo de chats: ' . get_class($error));
-            $errorMessage = 'No se pudo conectar con la base de datos. Revisa la configuración y que MySQL esté activo.';
+            $errorMessage = 'No se pudo conectar con la base de datos. Revisa la configuración y que PostgreSQL esté activo.';
         }
 
         require __DIR__ . '/../../views/chats.php';
     }
 
-    public function send(array $input): never
+    public function send(array $input, array $files = []): never
     {
+        if (MessageAttachment::requestExceededPostLimit()) {
+            $this->redirectWith('error', 'La imagen es demasiado grande; el máximo es 5 MB.', '');
+        }
         $this->verifyCsrf($input);
 
         $destination = preg_replace('/\D+/', '', (string) ($input['destination'] ?? '')) ?? '';
@@ -58,10 +61,13 @@ final class ChatController
         $attemptId = null;
         $apiAccepted = false;
         try {
+            $attachment = MessageAttachment::fromUpload($files['attachment'] ?? null);
             $chatbot = ChatbotApiClient::fromEnvironment();
             $normalized = $chatbot->normalizeDestination($destination);
-            $attemptId = $this->chats->createOutboundAttempt($normalized, $message);
-            $result = $chatbot->sendText($normalized, $message);
+            // La imagen no se guarda en la base de datos; el hilo solo registra su título.
+            $storedBody = $attachment === null ? $message : '[Imagen: ' . $attachment->title . "]\n" . $message;
+            $attemptId = $this->chats->createOutboundAttempt($normalized, $storedBody);
+            $result = $chatbot->sendMessage($normalized, $message, $attachment);
             $apiAccepted = true;
             $this->chats->finishOutboundAttempt($attemptId, 'sent', (int) $result['http_status']);
             $this->redirectWith('success', '', $normalized, false);

@@ -73,6 +73,11 @@ h1 { margin-bottom: 7px; font: 800 28px Manrope, Arial, sans-serif; letter-spaci
 .search-field input::placeholder { color: #a0aaba; }
 .date-field { display: flex; height: 37px; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid #e0e6ee; border-radius: 7px; color: #8793a4; font-size: 10px; }
 .date-field input { width: 113px; border: 0; outline: 0; color: #43536a; background: transparent; font-size: 10px; }
+.date-field select { width: 170px; border: 0; outline: 0; color: #43536a; background: transparent; font: 10px "DM Sans", Arial, sans-serif; }
+/* Botón de envío invisible: mantiene Enter funcionando en el buscador de texto
+   (algunos navegadores lo requieren cuando el formulario tiene varios campos),
+   sin mostrar un botón "Filtrar" que ya no hace falta. */
+.visually-hidden { display: none; }
 .button-primary { height: 37px; padding: 0 15px; border: 0; border-radius: 7px; background: #286dd2; color: #fff; font-size: 11px; font-weight: 700; cursor: pointer; }
 .button-primary:hover { background: #1f5fbd; }
 .clear-link { padding: 7px 2px; color: #6680a2; font-size: 11px; }
@@ -121,6 +126,13 @@ tbody tr:hover { background: #f8fbff; }
 .reminder-dialog-heading h2 { margin: 0; font: 700 19px Manrope, sans-serif; }
 .dialog-close { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid #e2e8f0; border-radius: 7px; background: #fff; color: #66758a; font-size: 21px; cursor: pointer; }
 .dialog-description { margin: 10px 0 16px; color: #7b889a; font-size: 11px; }
+.bulk-table th:nth-child(1), .bulk-table td:nth-child(1) { width: 34px; text-align: center; }
+.bulk-table th:nth-child(6) { width: 110px; }
+.bulk-table th:nth-child(7) { width: 90px; }
+.bulk-message-preview { margin: 6px 0 0; padding: 8px; border: 1px solid #edf0f4; border-radius: 6px; background: #f8fafc; color: var(--ink); font: 10px/1.5 "DM Sans", Arial, sans-serif; white-space: pre-wrap; max-width: 320px; }
+.bulk-panel .send-form { padding: 18px 22px 22px; }
+.bulk-name-filter-field { max-width: 320px; margin: 16px 22px 0; }
+
 .send-form { display: grid; gap: 12px; }
 .send-form > label:not(.transmission-consent) { display: grid; gap: 5px; color: #64748b; font-size: 10px; font-weight: 700; }
 .send-form input[type="tel"] { width: 100%; height: 35px; padding: 0 10px; border: 1px solid #dce3ec; border-radius: 6px; color: var(--ink); }
@@ -164,19 +176,20 @@ tbody tr:hover { background: #f8fbff; }
 .manual-entry-panel { margin-bottom: 17px; }
 .manual-contact-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: end; gap: 12px; padding: 0 22px 18px; }
 .manual-contact-form > label { display: grid; gap: 6px; color: #64748b; font-size: 10px; font-weight: 700; }
-.manual-contact-form input { width: 100%; height: 37px; padding: 0 10px; border: 1px solid #dce3ec; border-radius: 6px; color: var(--ink); background: #fff; font: 11px "DM Sans", Arial, sans-serif; }
-.manual-contact-form input:focus { outline: 2px solid #b9d1fb; border-color: #6c9be7; }
+.manual-contact-form input, .manual-contact-form select { width: 100%; height: 37px; padding: 0 10px; border: 1px solid #dce3ec; border-radius: 6px; color: var(--ink); background: #fff; font: 11px "DM Sans", Arial, sans-serif; }
+.manual-contact-form input:focus, .manual-contact-form select:focus { outline: 2px solid #b9d1fb; border-color: #6c9be7; }
 .manual-doctor-field { grid-column: span 2; }
 .manual-add-button { justify-self: start; }
 .manual-data-note { margin: 0; padding: 0 22px 16px; color: #8995a6; font-size: 10px; line-height: 1.55; }
 .manual-list-panel .panel-heading { padding-bottom: 17px; }
-.manual-table { min-width: 880px; }
-.manual-table th:nth-child(1) { width: 22%; }
-.manual-table th:nth-child(2) { width: 15%; }
-.manual-table th:nth-child(3) { width: 15%; }
-.manual-table th:nth-child(4) { width: 20%; }
-.manual-table th:nth-child(5) { width: 18%; }
-.manual-table th:nth-child(6) { width: 10%; }
+.manual-table { min-width: 960px; }
+.manual-table th:nth-child(1) { width: 20%; }
+.manual-table th:nth-child(2) { width: 13%; }
+.manual-table th:nth-child(3) { width: 13%; }
+.manual-table th:nth-child(4) { width: 16%; }
+.manual-table th:nth-child(5) { width: 10%; }
+.manual-table th:nth-child(6) { width: 18%; }
+.manual-table th:nth-child(7) { width: 10%; }
 .manual-table td { padding-top: 13px; padding-bottom: 13px; }
 .manual-actions { display: flex; align-items: center; gap: 8px; }
 .manual-actions form { margin: 0; }
@@ -274,6 +287,8 @@ tbody tr:hover { background: #f8fbff; }
 .chat-composer textarea { flex: 1; min-height: 42px; max-height: 120px; padding: 10px 12px; border: 1px solid #dce3ec; border-radius: 8px; color: var(--ink); background: #fff; font: 12px/1.5 "DM Sans", Arial, sans-serif; resize: vertical; }
 .chat-composer textarea:focus { outline: 2px solid #b9d1fb; border-color: #6c9be7; }
 .chat-composer button { flex: 0 0 auto; }
+.chat-composer input[type="file"] { flex: 0 1 190px; min-width: 0; color: #64748b; font-size: 10px; }
+.send-form input[type="file"] { color: var(--ink); font-size: 11px; font-weight: 400; }
 @media (max-width: 900px) {
     .chat-shell { grid-template-columns: 1fr; }
     body[data-chat-destination]:not([data-chat-destination=""]) .chat-list-panel { display: none; }

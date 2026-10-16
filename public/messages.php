@@ -5,7 +5,9 @@ ini_set('display_errors', '0');
 error_reporting(E_ALL);
 session_start();
 
-if (!in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true)) {
+require_once __DIR__ . '/../config/access.php';
+
+if (!isLocalRequest()) {
     http_response_code(403);
     exit('El historial está limitado al equipo local.');
 }

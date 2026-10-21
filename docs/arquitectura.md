@@ -44,7 +44,7 @@ El worker conserva el último ID en `siges_sync_state`, pero también compara la
 ## Recordatorios y contactos
 
 - Las citas SIGES se muestran en la agenda. El destinatario y el texto se revisan antes de enviar.
-- `appointments.destination` guarda un celular extraído de `cita.contactos` en SIGES (JSON de texto, p. ej. `["987654321"]`; `SigesAppointmentSyncService::extractDestination()` se queda con el primer número que parezca un celular peruano válido). Es un punto de partida editable, no un dato de confianza ciega: sigue mostrándose para que una persona lo revise antes de enviar. Puede ser `NULL` si SIGES no trae un número reconocible.
+- `appointments.destination` guarda un celular extraído de `cita.contactos` en SIGES (JSON de texto, p. ej. `["987654321"]`; `SigesAppointmentSyncService::extractDestination()` se queda con el primer número que parezca un celular peruano válido y lo guarda de 9 dígitos, sin el 51: en SIGES unos lo digitan con el código de país y otros sin él; el envío vuelve a anteponer el 51 con `ChatbotApiClient::normalizeDestination()`). Es un punto de partida editable, no un dato de confianza ciega: sigue mostrándose para que una persona lo revise antes de enviar. Puede ser `NULL` si SIGES no trae un número reconocible.
 - **Envío masivo** (`bulk-reminders.php`, `BulkReminderController`): lista, para una fecha elegida, las citas `RESERVADO` con celular detectado que todavía no tienen un recordatorio `sent`. El texto de cada mensaje lo genera `ReminderMessageBuilder` (puerto en PHP de `buildReminderMessage()` de `app.js`; si cambias la plantilla, cámbiala en los dos lados). Sigue exigiendo una acción humana: la persona revisa la lista completa, puede excluir filas, y confirma una sola vez con una casilla antes de que se dispare el lote. No existe ningún disparador automático/programado — violaría la regla de AGENTS.md de que todo envío requiere confirmación explícita de una persona. Entre cada envío hay una pausa (`BulkReminderController::PACE_MICROSECONDS`) porque no hay documentación pública de los límites de ráfaga de Gestionalo.
 - `manual_contacts` guarda registros creados desde **Recordatorios temporales**. Son locales y nunca se exportan a SIGES.
 - `reminder_messages` conserva el resultado aceptado o fallido. `origin` distingue `siges` de `manual`; `manual_contact_id` enlaza envíos temporales.
@@ -63,12 +63,26 @@ El worker conserva el último ID en `siges_sync_state`, pero también compara la
 
 ## Esquema local
 
+- `users`: usuarios del inicio de sesión (contraseña con hash, rol, bloqueo por intentos fallidos). `reminder_messages.sent_by_user_id` y `chat_messages.sent_by_user_id` registran quién envió.
+
 - `appointments`: copia local de citas y ubicación; clave SIGES única en `siges_cita_id`.
 - `siges_sync_state`: cursor y estado del worker.
 - `reminder_messages`: historial de solicitudes de envío.
 - `manual_contacts`: personas y citas ingresadas temporalmente por el usuario.
 - `chat_messages`: mensajes entrantes y salientes del chat, por celular.
 
-`database/schema.sql` es el esquema base de PostgreSQL y `database/grants.sql` los permisos de los roles `siges_app` y `siges_sync`. Las migraciones van en `database/migrations/`; la última aplicada es `009_` (006 `unaccent`, 007 sede de prueba en `manual_contacts`, 008 `appointments.destination`, 009 tercera sede en `manual_contacts`). Mantén `schema.sql` alineado con ellas. `database/mysql-legacy/` conserva el esquema y las migraciones 001-005 de MySQL solo como referencia, y `scripts/migrate-mysql-to-postgresql.php` copia una vez los datos de la base MySQL anterior.
+`database/schema.sql` es el esquema base de PostgreSQL y `database/grants.sql` los permisos de los roles `siges_app` y `siges_sync`. Las migraciones van en `database/migrations/`; la última aplicada es `014_` (014 `reminder_messages.failure_reason`; 013 `appointments.siges_programacion_id`; 012 `appointments.destination` sin el 51; 011 latido del worker `siges_sync_state.last_run_at` para Estado del sistema; 010 usuarios del inicio de sesión y `sent_by_user_id`; 006 `unaccent`, 007 sede de prueba en `manual_contacts`, 008 `appointments.destination`, 009 tercera sede en `manual_contacts`). Mantén `schema.sql` alineado con ellas. `database/mysql-legacy/` conserva el esquema y las migraciones 001-005 de MySQL solo como referencia, y `scripts/migrate-mysql-to-postgresql.php` copia una vez los datos de la base MySQL anterior.
 
 Diferencias con MySQL a tener en cuenta: la búsqueda de la agenda usa `unaccent(...) ILIKE unaccent(...)` (extensión `unaccent`, migración 006), así que no distingue mayúsculas ni tildes; cada palabra buscada debe aparecer en alguna columna. El historial de envíos usa `ILIKE` (sí distingue tildes). `updated_at` se mantiene con un trigger y los id nuevos se obtienen con `RETURNING id`.
+
+## Números sin WhatsApp
+
+- `reminder_messages.failure_reason` (migración 014) vale `no_whatsapp` cuando Gestionalo responde HTTP 500 con `No LID for user` (`ChatbotApiException::failureReason()`). Los números con ese motivo se excluyen en `AppointmentRepository::findReadyForBulkReminder()` y `findReadyForBulkReminderById()` (constante `NOT_NO_WHATSAPP`, compara `destination` con y sin el 51), se cuentan con `countNoWhatsapp()` y `findPending()` los marca con `no_whatsapp` para la agenda. Un número vuelve a ofrecerse solo si cambia en SIGES.
+- `ChatbotApiException::sanitizeDetail()` guarda un extracto de la respuesta de la API con los celulares tapados; el envío masivo lo muestra al terminar el lote.
+
+## Detección de cambios y envíos duplicados
+
+- El worker compara, además de fecha, hora y estado, el celular extraído de `cita.contactos` y la programación (`siges_programacion_id`: médico + consultorio). Si cualquiera cambia en SIGES, relee la cita. Los celulares de relleno (todos los dígitos iguales, como `999999999`) se descartan y la cita queda "sin celular".
+- `AppointmentRepository::createReminderAttempt()` toma un bloqueo de PostgreSQL por cita (`pg_advisory_xact_lock`) y rechaza con `DuplicateSendException` un segundo intento si hay otro `pending` de menos de 2 minutos; así dos envíos simultáneos de la misma cita no duplican el mensaje.
+- El envío masivo libera el bloqueo de la sesión (`session_write_close()`) mientras envía y la reabre al terminar para guardar el aviso.
+- `scripts/verify-writes.php` comprueba, con rollback, las escrituras de envío, contactos y chats.

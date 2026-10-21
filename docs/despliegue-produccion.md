@@ -477,3 +477,28 @@ Para volver a la versión anterior: `git checkout <commit_anterior>`, `dc restar
 | Acceso de usuarios | Navegador del propio equipo | Túnel SSH por usuario |
 | Secretos | `.env` y `config/local.php` propios | Generados en el servidor (pasos 3 y 4); nunca copiados |
 | Respaldos | Manuales | Diarios (`/etc/cron.daily/siges-dashboard-backup`) |
+
+---
+
+## 17. Usuarios del inicio de sesión
+
+Desde la migración `010` la aplicación exige inicio de sesión. En una instalación nueva el esquema ya incluye la tabla `users`; en una existente aplica `database/migrations/010_add_users.sql` (ver sección 14). Después crea el primer administrador y los demás usuarios:
+
+```bash
+docker exec -it siges-dashboard-web php scripts/manage-users.php create <usuario> "<Nombre completo>" admin
+docker exec -it siges-dashboard-web php scripts/manage-users.php create <usuario> "<Nombre completo>" operador
+```
+
+Otros comandos: `list`, `passwd <usuario>`, `disable <usuario>`, `enable <usuario>`. Tras 5 intentos fallidos la cuenta se bloquea 10 minutos. La prueba `scripts/smoke-test-produccion.sh` admite `SMOKE_USER` y `SMOKE_PASSWORD` para verificar el flujo con sesión.
+
+La pantalla **Estado del sistema** (`health.php`, solo administradores) usa el latido del worker de la migración `011` (`database/migrations/011_add_sync_heartbeat.sql`); aplícala en una instalación existente y reinicia el worker con `dc restart sync`.
+
+---
+
+## 18. Despliegue real actual (PC Windows con Docker Desktop)
+
+La demo en producción **no** corre en un servidor Linux: está en una PC Windows (`192.168.1.71`) con Docker Desktop, acotada a la LAN. Resumen (detalle y trampas en `docs/estado-del-proyecto.md`):
+
+- Se arranca con `docker compose -f docker-compose.yml -f docker-compose.lan.yml up -d --build` (el segundo archivo publica la web también en la IP de la LAN; no se usa `docker-compose.prod.yml`).
+- `.env`: `DB_PUBLISH_PORT=15433`, `WEB_PUBLISH_PORT=8091` (8082 lo usa otra app de la PC), `SIGES_PG_HOST=192.168.1.253`. URL: `http://192.168.1.71:8091/`. Regla de firewall de Windows `SIGES Dashboard 8091` para `192.168.1.0/24`.
+- Los pasos 3 a 8b de esta guía (`.env`, `config/local.php`, rol de SIGES, arranque, restauración del historial) ya se ejecutaron. Cualquier cambio posterior se aplica con las migraciones numeradas y se verifica con `scripts/smoke-test-produccion.sh`.

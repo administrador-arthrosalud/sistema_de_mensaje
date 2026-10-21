@@ -4,7 +4,10 @@ Aplicación PHP con PDO y PostgreSQL para consultar citas programadas y enviar r
 
 ## Guías del proyecto
 
+- `docs/estado-del-proyecto.md`: **punto de partida para cualquier agente** — qué está desplegado, decisiones, pendientes y trampas del entorno.
 - `AGENTS.md`: reglas obligatorias para agentes que trabajen en el código.
+- `docs/auditoria-seguridad.md`: auditoría de seguridad y hallazgos abiertos.
+- `docs/mejoras-pendientes.md`: mejoras priorizadas (y cuáles ya se hicieron).
 - `docs/arquitectura.md`: flujo SIGES → worker → PostgreSQL local → dashboard y reglas de estados.
 - `docs/operacion-local.md`: entorno de desarrollo (Docker Desktop), túnel SSH, worker y diagnóstico.
 - `docs/despliegue-produccion.md`: instalación paso a paso en el servidor oficial, verificación, respaldos y actualización.
@@ -61,6 +64,23 @@ views/bulk-reminders.php                  # Interfaz de Envío masivo
 views/sent-messages.php                   # Historial de contactos y recordatorios aceptados
 views/chats.php                           # Interfaz de la bandeja de chats
 ```
+
+## Inicio de sesión y usuarios
+
+Todas las páginas de `public/` (salvo `login.php`, `logout.php` y `chat-webhook.php`) exigen sesión: sin ella redirigen a `login.php` (o responden 401 si son endpoints JSON). Las contraseñas se guardan con `password_hash`; tras 5 intentos fallidos la cuenta se bloquea 10 minutos y la sesión caduca tras 8 horas sin uso. Los usuarios se administran dentro del contenedor web (la contraseña se pide por teclado, mínimo 10 caracteres):
+
+```sh
+docker exec -it siges-dashboard-web php scripts/manage-users.php create <usuario> "<Nombre completo>" [admin|operador]
+docker exec -it siges-dashboard-web php scripts/manage-users.php list
+docker exec -it siges-dashboard-web php scripts/manage-users.php passwd <usuario>
+docker exec -it siges-dashboard-web php scripts/manage-users.php disable <usuario>   # y enable
+```
+
+**Estado del sistema** (`health.php`, solo rol `admin`; los operadores reciben 403 y no ven el enlace): verifica latido del worker, citas visibles, celulares detectados, sedes no mapeadas, envíos fallidos de las últimas 24 h, configuración de Gestionalo y usuarios. No muestra datos de pacientes ni consulta SIGES (para eso `scripts/verify-sync.php`). El rol `operador` no tiene otras diferencias por ahora.
+
+## Números de WhatsApp y errores de envío
+
+El celular se guarda de 9 dígitos, sin el 51, y el envío le antepone el 51. Los números de relleno (`999999999`) no se toman como celular. Cuando Gestionalo responde `No LID for user` el número **no tiene WhatsApp** (o está mal digitado en SIGES): queda registrado como `no_whatsapp`, se marca en la agenda, se excluye del envío masivo (que avisa cuántos hay) y vuelve a ofrecerse solo si el celular cambia en SIGES. Tras un lote, el aviso nombra a los pacientes que fallaron y el motivo.
 
 ## Requisitos
 
@@ -191,4 +211,4 @@ Los mensajes que el paciente responde por WhatsApp llegan a `chat-webhook.php`. 
 
 ## Privacidad
 
-Los datos de pacientes y celulares son sensibles. Este prototipo no implementa inicio de sesión ni permisos por rol: ejecútalo solo en una red confiable o detrás del mecanismo de autenticación del hospital. No publiques `database/`, `config/` ni copias del archivo de datos en el directorio web. La aplicación lee citas de SIGES y solo escribe en su base PostgreSQL local: el registro de intentos de recordatorio (`reminder_messages`), los contactos temporales (`manual_contacts`) y los mensajes de chat (`chat_messages`).
+Los datos de pacientes y celulares son sensibles. La aplicación exige inicio de sesión (`login.php`) en todas sus páginas salvo el webhook. Los usuarios (roles `admin` y `operador`) se gestionan por línea de comandos con `scripts/manage-users.php` y cada envío guarda quién lo hizo (`sent_by_user_id`). Sigue limitada a la red local y no tiene HTTPS: úsala solo en una red confiable. No publiques `database/`, `config/` ni copias del archivo de datos en el directorio web. La aplicación lee citas de SIGES y solo escribe en su base PostgreSQL local: el registro de intentos de recordatorio (`reminder_messages`), los contactos temporales (`manual_contacts`) y los mensajes de chat (`chat_messages`).

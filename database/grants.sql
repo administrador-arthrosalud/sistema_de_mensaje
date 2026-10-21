@@ -11,6 +11,10 @@ GRANT USAGE ON SCHEMA public TO siges_app, siges_sync;
 GRANT SELECT ON appointments TO siges_app;
 GRANT SELECT, INSERT, UPDATE ON reminder_messages, chat_messages TO siges_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON manual_contacts TO siges_app;
+-- Inicio de sesión (migración 010).
+GRANT SELECT, INSERT, UPDATE ON users TO siges_app;
+-- Estado del sistema: lectura del latido del worker (migración 011).
+GRANT SELECT ON siges_sync_state TO siges_app;
 
 -- Worker: único proceso que escribe la copia local de citas.
 GRANT SELECT, INSERT, UPDATE ON appointments, siges_sync_state TO siges_sync;

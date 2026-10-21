@@ -21,6 +21,7 @@
                 cache: 'no-store',
                 headers: { Accept: 'application/json' },
             });
+            if (response.status === 401) { window.location.href = 'login.php'; return; }
             if (!response.ok) return;
             const data = await response.json();
             if (!data.version) return;

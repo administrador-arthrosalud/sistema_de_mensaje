@@ -114,7 +114,10 @@ final class ManualReminderController
             $this->markFailed($attemptId);
             $this->redirectWith('error', $error->getMessage());
         } catch (ChatbotApiException $error) {
-            $this->markFailed($attemptId, $error->httpStatus);
+            $this->markFailed($attemptId, $error->httpStatus, $error->failureReason());
+            if ($error->failureReason() === 'no_whatsapp') {
+                $this->redirectWith('error', 'Ese número no tiene WhatsApp (Gestionalo no lo encontró). Confirma el celular con la persona.');
+            }
             if (in_array($error->httpStatus, [401, 403], true)) {
                 $this->redirectWith('error', 'Gestionalo rechazó la solicitud. Verifica la clave autorizada de la línea.');
             }
@@ -152,13 +155,13 @@ final class ManualReminderController
         }
     }
 
-    private function markFailed(?int $attemptId, ?int $httpStatus = null): void
+    private function markFailed(?int $attemptId, ?int $httpStatus = null, ?string $failureReason = null): void
     {
         if ($attemptId === null) {
             return;
         }
         try {
-            $this->contacts->finishReminderAttempt($attemptId, 'failed', $httpStatus);
+            $this->contacts->finishReminderAttempt($attemptId, 'failed', $httpStatus, $failureReason);
         } catch (Throwable) {
             error_log('No se pudo actualizar el intento de recordatorio temporal.');
         }

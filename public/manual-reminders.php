@@ -3,7 +3,9 @@ declare(strict_types=1);
 
 ini_set('display_errors', '0');
 error_reporting(E_ALL);
-session_start();
+require_once __DIR__ . '/../config/auth.php';
+require_once __DIR__ . '/../config/database.php';
+authStartSession();
 
 require_once __DIR__ . '/../config/access.php';
 
@@ -11,6 +13,8 @@ if (!isLocalRequest()) {
     http_response_code(403);
     exit('Los recordatorios temporales están limitados al equipo local.');
 }
+
+requireLogin();
 
 if (!isset($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));

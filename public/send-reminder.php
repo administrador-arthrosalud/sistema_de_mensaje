@@ -3,7 +3,9 @@ declare(strict_types=1);
 
 ini_set('display_errors', '0');
 error_reporting(E_ALL);
-session_start();
+require_once __DIR__ . '/../config/auth.php';
+require_once __DIR__ . '/../config/database.php';
+authStartSession();
 
 require_once __DIR__ . '/../config/access.php';
 require_once __DIR__ . '/../config/database.php';
@@ -18,13 +20,13 @@ function finishWithNotification(string $type, string $message): never
     exit;
 }
 
-function markAttemptFailed(?AppointmentRepository $repository, ?int $attemptId, ?int $httpStatus = null): void
+function markAttemptFailed(?AppointmentRepository $repository, ?int $attemptId, ?int $httpStatus = null, ?string $failureReason = null): void
 {
     if ($repository === null || $attemptId === null) {
         return;
     }
     try {
-        $repository->finishReminderAttempt($attemptId, 'failed', $httpStatus);
+        $repository->finishReminderAttempt($attemptId, 'failed', $httpStatus, $failureReason);
     } catch (Throwable $error) {
         error_log('No se pudo actualizar el registro del intento de recordatorio.');
     }
@@ -34,6 +36,8 @@ if (!isLocalRequest()) {
     http_response_code(403);
     exit('El envío está limitado al equipo local.');
 }
+
+requireLogin();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -91,12 +95,17 @@ try {
     $repository->finishReminderAttempt($attemptId, 'sent', (int) $result['http_status']);
 
     finishWithNotification('success', 'Gestionalo aceptó el recordatorio; quedó registrado en Contactos enviados.');
+} catch (DuplicateSendException) {
+    finishWithNotification('error', 'Ya hay un envío en curso para esta cita. Espera unos segundos y revisa Contactos enviados.');
 } catch (InvalidArgumentException $error) {
     markAttemptFailed($repository, $attemptId);
     finishWithNotification('error', $error->getMessage());
 } catch (ChatbotApiException $error) {
     error_log('Gestionalo rechazó un recordatorio con HTTP ' . $error->httpStatus . '.');
-    markAttemptFailed($repository, $attemptId, $error->httpStatus);
+    markAttemptFailed($repository, $attemptId, $error->httpStatus, $error->failureReason());
+    if ($error->failureReason() === 'no_whatsapp') {
+        finishWithNotification('error', 'Ese número no tiene WhatsApp (Gestionalo no lo encontró). Confirma el celular con el paciente; si lo corrigen en SIGES, se actualiza solo.');
+    }
     if (in_array($error->httpStatus, [401, 403], true)) {
         finishWithNotification(
             'error',
@@ -108,7 +117,7 @@ try {
         'Gestionalo respondió con HTTP ' . $error->httpStatus . '. Revisa la configuración de la API.'
     );
 } catch (Throwable $error) {
-    error_log('Falló el envío de un recordatorio: ' . $error->getMessage());
+    error_log('Falló el envío de un recordatorio: ' . get_class($error));
     if ($apiAccepted) {
         finishWithNotification('error', 'Gestionalo aceptó el recordatorio, pero no se pudo actualizar el historial. Revisa Contactos enviados antes de reenviarlo.');
     }

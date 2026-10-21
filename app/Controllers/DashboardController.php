@@ -16,7 +16,7 @@ final class DashboardController
             $dashboard = $this->dashboardService->dashboard($query);
             $errorMessage = '';
         } catch (Throwable $error) {
-            error_log((string) $error);
+            error_log("No se pudo cargar la agenda: " . get_class($error));
             $dashboard = [
                 'filters' => ['search' => '', 'sede' => '', 'date_from' => '', 'date_to' => ''],
                 'version' => '',

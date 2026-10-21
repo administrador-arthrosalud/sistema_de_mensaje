@@ -1,0 +1,9 @@
+# Publica la web también en la IP de la LAN de este equipo para que otras PCs
+# entren por URL. Se usa junto a docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.lan.yml up -d --build
+# Las peticiones llegan por la puerta de enlace de Docker, que el filtro de
+# acceso (LOCAL_ACCESS_EXTRA_IPS) ya acepta. La app NO tiene login.
+services:
+  web:
+    ports:
+      - "${LAN_BIND_IP:-192.168.1.71}:${WEB_PUBLISH_PORT:-8082}:80"

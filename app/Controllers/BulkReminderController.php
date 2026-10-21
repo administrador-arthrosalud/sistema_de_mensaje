@@ -34,9 +34,11 @@ final class BulkReminderController
         $errorMessage = '';
         $candidates = [];
         $missingDestinationCount = 0;
+        $noWhatsappCount = 0;
         try {
             $candidates = $this->appointments->findReadyForBulkReminder($date);
             $missingDestinationCount = $this->appointments->countNeedingManualDestination($date);
+            $noWhatsappCount = $this->appointments->countNoWhatsapp($date);
         } catch (Throwable $error) {
             error_log('No se pudo cargar el envío masivo: ' . get_class($error));
             $errorMessage = 'No se pudo conectar con la base de datos. Revisa la configuración y que PostgreSQL esté activo.';
@@ -87,11 +89,15 @@ final class BulkReminderController
             $this->redirectWith('error', 'Selecciona al menos un paciente de la lista.', $date);
         }
 
+        // El lote puede durar minutos: se libera el bloqueo de la sesión para no congelar las demás pestañas
+        // del mismo usuario. Se reabre al final para guardar el aviso de resultado.
+        session_write_close();
         $chatbot = ChatbotApiClient::fromEnvironment();
         $sent = 0;
         $failed = 0;
         $skipped = 0;
         $first = true;
+        $failures = [];
         foreach ($ids as $id) {
             if (!$first) {
                 usleep(self::PACE_MICROSECONDS);
@@ -120,21 +126,29 @@ final class BulkReminderController
                 $result = $chatbot->sendText($destination, $message);
                 $this->appointments->finishReminderAttempt($attemptId, 'sent', (int) $result['http_status']);
                 $sent++;
+            } catch (DuplicateSendException) {
+                $skipped++; // otro envío de la misma cita ya está en curso
             } catch (Throwable $error) {
                 if ($attemptId !== null) {
                     try {
                         $httpStatus = $error instanceof ChatbotApiException ? $error->httpStatus : null;
-                        $this->appointments->finishReminderAttempt($attemptId, 'failed', $httpStatus);
+                        $this->appointments->finishReminderAttempt($attemptId, 'failed', $httpStatus, $error instanceof ChatbotApiException ? $error->failureReason() : null);
                     } catch (Throwable) {
                         error_log('No se pudo actualizar un intento del envío masivo.');
                     }
                 }
                 error_log('Falló un envío del lote masivo: ' . get_class($error));
+                $failures[] = [(string) $appointment['patient_name'], $error instanceof ChatbotApiException ? ($error->failureReason() === 'no_whatsapp' ? 'número sin WhatsApp' : 'HTTP ' . $error->httpStatus . ($error->detail !== '' ? ': ' . $error->detail : '')) : get_class($error)];
                 $failed++;
             }
         }
 
+        authStartSession();
         $message = sprintf('Envío masivo terminado: %d enviados, %d fallidos, %d ya no disponibles.', $sent, $failed, $skipped);
+        if ($failures !== []) {
+            $items = array_map(static fn (array $f): string => $f[0] . ' (' . $f[1] . ')', array_slice($failures, 0, 8));
+            $message .= ' No se pudo enviar a: ' . implode('; ', $items) . (count($failures) > 8 ? '; y ' . (count($failures) - 8) . ' más' : '') . '.';
+        }
         $this->redirectWith($failed > 0 ? 'error' : 'success', $message, $date);
     }
 

@@ -295,3 +295,87 @@ tbody tr:hover { background: #f8fbff; }
     body:not([data-chat-destination]) .chat-thread-panel,
     body[data-chat-destination=""] .chat-thread-panel { display: none; }
 }
+
+/* Inicio de sesión y usuario en la barra lateral */
+.login-page { display: grid; min-height: 100vh; place-items: center; padding: 24px; background: var(--navy); }
+.login-card { width: min(100%, 380px); padding: 32px 30px 28px; border-radius: 14px; background: #fff; box-shadow: 0 18px 50px rgba(0, 0, 0, .28); }
+.login-brand { display: flex; align-items: center; gap: 11px; margin-bottom: 24px; }
+.login-brand .brand-mark { color: #fff; }
+.login-brand strong, .login-brand small { display: block; }
+.login-brand strong { font: 800 15px Manrope, sans-serif; letter-spacing: .11em; }
+.login-brand small { margin-top: 2px; color: var(--muted); font-size: 11px; }
+.login-card h1 { margin-bottom: 4px; font-size: 22px; }
+.login-hint { margin-bottom: 18px; color: var(--muted); }
+.login-card label { display: block; margin: 14px 0 6px; font-size: 12px; font-weight: 700; color: #32445b; }
+.login-card input[type="text"], .login-card input[type="password"] { width: 100%; height: 42px; padding: 0 12px; border: 1px solid #cfd8e4; border-radius: 8px; background: #fff; color: var(--ink); }
+.login-card input:focus { outline: 2px solid #9cc2ff; border-color: var(--blue); }
+.login-submit { width: 100%; height: 44px; margin-top: 22px; border: 0; border-radius: 8px; background: var(--blue); color: #fff; font-weight: 700; cursor: pointer; }
+.login-submit:hover { background: #1c57b5; }
+.login-error { margin-bottom: 4px; padding: 10px 12px; border-radius: 8px; background: #fde8e8; color: #9b1c1c; font-size: 13px; }
+.sidebar-user { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 0 9px; font-size: 12px; color: #c7d3e2; }
+.sidebar-user-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.sidebar-user-logout { margin-left: auto; padding: 5px 10px; border: 1px solid #3b5273; border-radius: 6px; background: transparent; color: #dbe6f5; font-size: 11px; cursor: pointer; }
+.sidebar-user-logout:hover { background: #1b3a62; }
+.brand-logo { display: block; width: 44px; height: auto; flex: none; }
+.login-brand .brand-logo { width: 48px; }
+
+/* Login: fondo cobre degradado y tarjeta navy degradado para que resalte el logo */
+.login-page { background: radial-gradient(circle at 18% 12%, #e9a566 0, transparent 46%), radial-gradient(circle at 85% 90%, #6b3512 0, transparent 52%), linear-gradient(135deg, #b8703a 0%, #d68a4a 48%, #8f4d22 100%); }
+.login-card { color: #fff; background: linear-gradient(165deg, #1d4170 0%, #10233f 52%, #08121f 100%); box-shadow: 0 24px 60px rgba(60, 25, 5, .5), 0 0 0 1px rgba(255, 255, 255, .08); }
+.login-brand { flex-direction: column; gap: 12px; margin-bottom: 20px; text-align: center; }
+.login-brand .brand-logo { width: 104px; filter: drop-shadow(0 4px 14px rgba(0, 0, 0, .35)); }
+.login-brand strong { color: #fff; font-size: 17px; }
+.login-brand small { color: #a9b9d0; }
+.login-card h1 { color: #fff; text-align: center; }
+.login-hint { color: #a9b9d0; text-align: center; }
+.login-card label { color: #cfdae9; }
+.login-card input[type="text"], .login-card input[type="password"] { border-color: #2f4a70; background: rgba(255, 255, 255, .96); }
+.login-card input:focus { outline: 2px solid #e9a566; border-color: #e9a566; }
+.login-submit { background: linear-gradient(135deg, #d98a4a, #b8703a); color: #fff; }
+.login-submit:hover { background: linear-gradient(135deg, #e39a5c, #c47c44); }
+.login-error { background: rgba(253, 232, 232, .96); }
+
+/* Login: tarjeta blanca (el logo a color resalta sobre blanco) */
+.login-card { color: var(--ink); background: #fff; box-shadow: 0 24px 60px rgba(60, 25, 5, .45); }
+.login-brand .brand-logo { width: 112px; filter: none; }
+.login-brand strong { color: var(--ink); }
+.login-brand small { color: var(--muted); }
+.login-card h1 { color: var(--ink); }
+.login-hint { color: var(--muted); }
+.login-card label { color: #32445b; }
+.login-card input[type="text"], .login-card input[type="password"] { border-color: #cfd8e4; background: #fff; }
+.login-card input:focus { outline: 2px solid #9cc2ff; border-color: var(--blue); }
+.login-submit { background: linear-gradient(135deg, #1d4170, #10233f); }
+.login-submit:hover { background: linear-gradient(135deg, #25508a, #163056); }
+.login-error { background: #fde8e8; }
+
+/* Login: fondo más anaranjado (naranja del logo #f39221) */
+.login-page { background: radial-gradient(circle at 15% 10%, #ffbe73 0, transparent 45%), radial-gradient(circle at 88% 92%, #d9650f 0, transparent 52%), linear-gradient(135deg, #f7a23e 0%, #f39221 50%, #e0730e 100%); }
+
+/* Login: nombre de la clínica como texto (reemplaza "SIGES / Agenda médica") */
+.login-wordmark { display: flex; flex-direction: column; align-items: center; width: 100%; font-family: Montserrat, "DM Sans", Arial, sans-serif; text-transform: uppercase; }
+.login-wordmark .wm-top { color: #0b4a8f; font-size: 11.5px; font-weight: 500; letter-spacing: .06em; }
+.login-wordmark .wm-name { margin: 1px 0 6px; color: #0b4a8f; font-size: 29px; font-weight: 800; line-height: 1.05; letter-spacing: -.01em; }
+.login-wordmark .wm-tag { width: 100%; padding-top: 6px; border-top: 2px solid #f39221; color: #f39221; font-size: 13.5px; font-weight: 800; letter-spacing: .04em; }
+
+/* Estado del sistema (solo administradores) */
+.health-refresh { display: inline-flex; align-items: center; text-decoration: none; }
+.health-summary { display: flex; flex-direction: column; gap: 4px; margin-bottom: 18px; padding: 16px 18px; border-radius: 10px; border: 1px solid; }
+.health-summary strong { font: 700 16px Manrope, sans-serif; }
+.health-summary span { font-size: 12px; opacity: .85; }
+.health-summary.health-ok { background: #e8f7f0; border-color: #b7e4d0; color: #146c4e; }
+.health-summary.health-warn { background: #fff6e5; border-color: #f0d1a7; color: #8a5a00; }
+.health-summary.health-fail { background: #fde8e8; border-color: #f3b8b8; color: #9b1c1c; }
+.health-card { margin-bottom: 16px; padding: 6px 0; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.health-card h2 { margin: 0; padding: 14px 20px 8px; font: 700 14px Manrope, sans-serif; }
+.health-row { display: flex; align-items: flex-start; gap: 14px; padding: 11px 20px; border-top: 1px solid #edf0f4; }
+.health-row strong { font-size: 13px; }
+.health-row p { margin: 2px 0 0; color: #617086; font-size: 12px; }
+.health-badge { flex: none; min-width: 54px; padding: 4px 0; border-radius: 6px; text-align: center; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.health-badge.health-ok { background: #e8f7f0; color: #146c4e; }
+.health-badge.health-warn { background: #fff0d1; color: #8a5a00; }
+.health-badge.health-fail { background: #fde0e0; color: #9b1c1c; }
+.health-badge.health-info { background: #e8eef8; color: #3b5b8c; }
+
+/* Sin el pie "Datos de SIGES": el usuario queda al fondo de la barra lateral */
+.sidebar-user { margin-top: auto; padding: 15px 9px 0; border-top: 1px solid #283c57; }

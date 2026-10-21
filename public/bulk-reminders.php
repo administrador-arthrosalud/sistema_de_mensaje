@@ -6,7 +6,9 @@ error_reporting(E_ALL);
 // El lote puede tardar varios segundos (una pausa entre cada envío); el valor
 // por defecto de PHP cortaría a mitad de un envío masivo grande.
 set_time_limit(300);
-session_start();
+require_once __DIR__ . '/../config/auth.php';
+require_once __DIR__ . '/../config/database.php';
+authStartSession();
 
 require_once __DIR__ . '/../config/access.php';
 
@@ -14,6 +16,8 @@ if (!isLocalRequest()) {
     http_response_code(403);
     exit('El envío masivo está limitado al equipo local.');
 }
+
+requireLogin();
 
 if (!isset($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));

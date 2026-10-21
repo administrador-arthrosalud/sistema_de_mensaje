@@ -11,7 +11,10 @@ if (!isLocalRequest()) {
     exit('La agenda está limitada al equipo local.');
 }
 
-session_start();
+require_once __DIR__ . '/../config/auth.php';
+require_once __DIR__ . '/../config/database.php';
+authStartSession();
+requireLogin();
 if (!isset($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }

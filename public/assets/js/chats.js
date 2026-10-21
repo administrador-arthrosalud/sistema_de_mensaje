@@ -54,6 +54,7 @@
     const pollList = async () => {
         try {
             const response = await fetch('chat-messages.php', { cache: 'no-store', headers: { Accept: 'application/json' } });
+            if (response.status === 401) { window.location.href = 'login.php'; return; }
             if (!response.ok) return;
             const data = await response.json();
             if (!data.version) return;
@@ -90,6 +91,7 @@
                 cache: 'no-store',
                 headers: { Accept: 'application/json' },
             });
+            if (response.status === 401) { window.location.href = 'login.php'; return; }
             if (!response.ok) return;
             const data = await response.json();
             (data.messages || []).forEach((item) => {

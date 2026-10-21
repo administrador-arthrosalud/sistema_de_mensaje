@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#10233f">
-    <title>Citas pendientes | SIGES</title>
+    <title>Citas pendientes | Chatbot</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
@@ -14,9 +14,8 @@
 <body data-appointments-version="<?= $escape($dataVersion) ?>">
 <div class="app-shell">
     <aside class="sidebar" aria-label="Navegación principal">
-        <a class="brand" href="index.php" aria-label="SIGES, inicio">
-            <span class="brand-mark" aria-hidden="true">S</span>
-            <span><strong>SIGES</strong><small>Agenda médica</small></span>
+        <a class="brand" href="index.php" aria-label="Chatbot, inicio">
+            <span><strong>CHATBOT</strong><small>Agenda médica</small></span>
         </a>
         <div class="sidebar-section-label">CONSULTAS</div>
         <a class="nav-item is-active" href="index.php" aria-current="page">
@@ -40,7 +39,8 @@
             <span>Chats</span>
             <span class="nav-badge" <?= $chatUnread > 0 ? '' : 'hidden' ?>><?= (int) $chatUnread ?></span>
         </a>
-        <div class="sidebar-footer"><span class="status-dot"></span> Datos de SIGES <small>Solo lectura</small></div>
+        <?= authAdminNav() ?>
+        <?= authUserBox() ?>
     </aside>
 
     <main class="main-content">
@@ -146,7 +146,7 @@
                                 <tr>
                                     <?php
                                     $reminderStatus = (string) ($appointment['reminder_status'] ?? '');
-                                    $contactState = match ($reminderStatus) {
+                                    $contactState = !empty($appointment['no_whatsapp']) ? ['failed', 'Sin WhatsApp: verifica el celular'] : match ($reminderStatus) {
                                         'sent' => ['sent', 'Aceptado por Gestionalo'],
                                         'failed' => ['failed', 'Falló el envío'],
                                         'pending' => ['sending', 'Envío en curso'],

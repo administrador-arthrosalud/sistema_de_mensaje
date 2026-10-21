@@ -60,9 +60,9 @@ final class ManualContactRepository
         $statement = $this->database->prepare(
             "INSERT INTO reminder_messages
                 (appointment_id, origin, manual_contact_id, destination, patient_name,
-                 appointment_date, appointment_time, doctor_name, status)
+                 appointment_date, appointment_time, doctor_name, status, sent_by_user_id)
              VALUES (0, 'manual', :manual_contact_id, :destination, :patient_name,
-                     :appointment_date, :appointment_time, :doctor_name, 'pending')
+                     :appointment_date, :appointment_time, :doctor_name, 'pending', :sent_by)
              RETURNING id"
         );
         $statement->execute([
@@ -72,25 +72,27 @@ final class ManualContactRepository
             ':appointment_date' => $contact['appointment_date'],
             ':appointment_time' => $contact['appointment_time'],
             ':doctor_name' => $contact['doctor_name'],
+            ':sent_by' => function_exists('currentUserId') ? currentUserId() : null,
         ]);
 
         return (int) $statement->fetchColumn();
     }
 
-    public function finishReminderAttempt(int $id, string $status, ?int $httpStatus = null): void
+    public function finishReminderAttempt(int $id, string $status, ?int $httpStatus = null, ?string $failureReason = null): void
     {
         if (!in_array($status, ['sent', 'failed'], true)) {
             throw new InvalidArgumentException('El resultado del envío no es válido.');
         }
         $statement = $this->database->prepare(
             "UPDATE reminder_messages
-             SET status = :status, http_status = :http_status,
+             SET status = :status, http_status = :http_status, failure_reason = :failure_reason,
                  sent_at = CASE WHEN CAST(:status_for_date AS text) = 'sent' THEN LOCALTIMESTAMP(0) ELSE NULL END
              WHERE id = :id AND origin = 'manual' AND status = 'pending'"
         );
         $statement->execute([
             ':status' => $status,
             ':http_status' => $httpStatus,
+            ':failure_reason' => $status === 'failed' ? $failureReason : null,
             ':status_for_date' => $status,
             ':id' => $id,
         ]);

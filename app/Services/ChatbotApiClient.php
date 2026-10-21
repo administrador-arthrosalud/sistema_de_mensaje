@@ -3,9 +3,25 @@ declare(strict_types=1);
 
 final class ChatbotApiException extends RuntimeException
 {
-    public function __construct(public readonly int $httpStatus)
+    /** $detail: inicio de la respuesta de Gestionalo, con las secuencias largas de dígitos (celulares) ocultas. */
+    public function __construct(public readonly int $httpStatus, public readonly string $detail = '')
     {
         parent::__construct('La API de Gestionalo respondió con HTTP ' . $httpStatus . '.');
+    }
+
+    /** 'no_whatsapp' cuando Gestionalo dice "No LID for user": el número no existe en WhatsApp. */
+    public function failureReason(): ?string
+    {
+        return stripos($this->detail, 'No LID for user') !== false ? 'no_whatsapp' : null;
+    }
+
+    /** Respuesta de la API apta para mostrar o registrar: sin etiquetas, sin celulares y de longitud acotada. */
+    public static function sanitizeDetail(string $body): string
+    {
+        $text = trim(preg_replace('/\s+/u', ' ', strip_tags($body)) ?? '');
+        $text = preg_replace('/\d{7,}/', '***', $text) ?? '';
+
+        return mb_substr($text, 0, 200, 'UTF-8');
     }
 }
 
@@ -174,7 +190,9 @@ final class ChatbotApiClient
             throw new RuntimeException('Falló la conexión con la API del chatbot: ' . $curlError);
         }
         if ($httpStatus < 200 || $httpStatus >= 300) {
-            throw new ChatbotApiException($httpStatus);
+            $detail = ChatbotApiException::sanitizeDetail((string) $responseBody);
+            error_log('Gestionalo respondió HTTP ' . $httpStatus . ': ' . ($detail !== '' ? $detail : '(sin cuerpo)'));
+            throw new ChatbotApiException($httpStatus, $detail);
         }
 
         return [

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#10233f">
-    <title>Envío masivo | SIGES</title>
+    <title>Envío masivo | Chatbot</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
@@ -14,9 +14,8 @@
 <body>
 <div class="app-shell">
     <aside class="sidebar" aria-label="Navegación principal">
-        <a class="brand" href="index.php" aria-label="SIGES, inicio">
-            <span class="brand-mark" aria-hidden="true">S</span>
-            <span><strong>SIGES</strong><small>Agenda médica</small></span>
+        <a class="brand" href="index.php" aria-label="Chatbot, inicio">
+            <span><strong>CHATBOT</strong><small>Agenda médica</small></span>
         </a>
         <div class="sidebar-section-label">CONSULTAS</div>
         <a class="nav-item" href="index.php">
@@ -40,7 +39,8 @@
             <span>Chats</span>
             <span class="nav-badge" <?= $chatUnread > 0 ? '' : 'hidden' ?>><?= (int) $chatUnread ?></span>
         </a>
-        <div class="sidebar-footer"><span class="status-dot"></span> Datos de SIGES <small>Solo lectura</small></div>
+        <?= authAdminNav() ?>
+        <?= authUserBox() ?>
     </aside>
 
     <main class="main-content">
@@ -80,6 +80,9 @@
                 </form>
                 <?php if ($missingDestinationCount > 0): ?>
                     <p class="data-note">Además, <strong><?= number_format($missingDestinationCount, 0, ',', '.') ?></strong> cita<?= $missingDestinationCount === 1 ? '' : 's' ?> de ese día no tiene<?= $missingDestinationCount === 1 ? '' : 'n' ?> un celular detectado en SIGES; envíalas una por una desde <a href="index.php">Citas pendientes</a> escribiendo el número a mano.</p>
+                <?php endif; ?>
+                <?php if ($noWhatsappCount > 0): ?>
+                    <p class="data-note"><strong><?= number_format($noWhatsappCount, 0, ',', '.') ?></strong> cita<?= $noWhatsappCount === 1 ? '' : 's' ?> de ese día tiene<?= $noWhatsappCount === 1 ? '' : 'n' ?> un celular sin WhatsApp (Gestionalo no lo encontró) y no se incluye<?= $noWhatsappCount === 1 ? '' : 'n' ?> en el lote: confirma el número con el paciente o avísale por llamada. Si el celular cambia en SIGES, vuelve a aparecer.</p>
                 <?php endif; ?>
 
                 <?php if ($previews !== []): ?>

@@ -1,6 +1,11 @@
 <?php
 declare(strict_types=1);
 
+/** Ya hay otro envío en curso para la misma cita (doble clic, dos operadores). */
+final class DuplicateSendException extends RuntimeException
+{
+}
+
 final class AppointmentRepository
 {
     public function __construct(private PDO $database)
@@ -18,6 +23,10 @@ final class AppointmentRepository
 
     /** Citas cuya fecha y hora aún no han pasado (hora de la sesión: APP_TIMEZONE). */
     private const NOT_PAST = '(appointment_date > CURRENT_DATE OR (appointment_date = CURRENT_DATE AND appointment_time >= LOCALTIME))';
+
+    /** Excluye (alias "a") los celulares que Gestionalo ya dijo que no tienen WhatsApp; vuelven si el número cambia en SIGES. */
+    private const NOT_NO_WHATSAPP = "AND NOT EXISTS (SELECT 1 FROM reminder_messages nw
+        WHERE nw.failure_reason = 'no_whatsapp' AND nw.destination IN (a.destination, '51' || a.destination))";
 
     public function pendingVersion(): string
     {
@@ -70,7 +79,8 @@ final class AppointmentRepository
                        a.specialty, a.sede_nombre, a.consultorio, a.modulo, a.codigo_ipress,
                        a.appointment_note, a.visit_reason, a.destination,
                        (SELECT rm.status FROM reminder_messages rm WHERE rm.appointment_id = a.id ORDER BY rm.id DESC LIMIT 1) AS reminder_status,
-                       (SELECT rm.sent_at FROM reminder_messages rm WHERE rm.appointment_id = a.id AND rm.status = 'sent' ORDER BY rm.id DESC LIMIT 1) AS reminder_sent_at
+                       (SELECT rm.sent_at FROM reminder_messages rm WHERE rm.appointment_id = a.id AND rm.status = 'sent' ORDER BY rm.id DESC LIMIT 1) AS reminder_sent_at,
+                       EXISTS (SELECT 1 FROM reminder_messages nw WHERE nw.failure_reason = 'no_whatsapp' AND nw.destination IN (a.destination, '51' || a.destination)) AS no_whatsapp
                 FROM appointments a
                 WHERE {$where}
                 ORDER BY a.appointment_date ASC, a.appointment_time ASC, a.patient_name ASC
@@ -117,11 +127,29 @@ final class AppointmentRepository
                AND NOT EXISTS (
                    SELECT 1 FROM reminder_messages rm WHERE rm.appointment_id = a.id AND rm.status = 'sent'
                )
+               " . self::NOT_NO_WHATSAPP . "
              ORDER BY appointment_time ASC, patient_name ASC"
         );
         $statement->execute([':date' => $date]);
 
         return $statement->fetchAll();
+    }
+
+    /** Citas de la fecha con celular detectado cuyo número Gestionalo ya dijo que no tiene WhatsApp. */
+    public function countNoWhatsapp(string $date): int
+    {
+        $statement = $this->database->prepare(
+            "SELECT COUNT(*) FROM appointments a
+             WHERE status = 'RESERVADO' AND siges_cita_id IS NOT NULL AND destination IS NOT NULL
+               AND appointment_date = :date AND " . self::NOT_PAST . "
+               AND EXISTS (
+                   SELECT 1 FROM reminder_messages nw
+                   WHERE nw.failure_reason = 'no_whatsapp' AND nw.destination IN (a.destination, '51' || a.destination)
+               )"
+        );
+        $statement->execute([':date' => $date]);
+
+        return (int) $statement->fetchColumn();
     }
 
     /** Para que el personal sepa cuántas citas de la fecha necesitan el formulario manual. */
@@ -152,6 +180,7 @@ final class AppointmentRepository
                AND NOT EXISTS (
                    SELECT 1 FROM reminder_messages rm WHERE rm.appointment_id = a.id AND rm.status = 'sent'
                )
+               " . self::NOT_NO_WHATSAPP . "
              LIMIT 1"
         );
         $statement->execute([':id' => $id]);
@@ -162,10 +191,29 @@ final class AppointmentRepository
 
     public function createReminderAttempt(array $appointment, string $destination): int
     {
+        // El bloqueo por cita serializa dos peticiones simultáneas: la segunda espera a que la primera
+        // registre su intento y entonces lo ve "pending", en vez de enviar el mismo recordatorio dos veces.
+        $ownsTransaction = !$this->database->inTransaction();
+        if ($ownsTransaction) {
+            $this->database->beginTransaction();
+        }
+        try {
+            $lock = $this->database->prepare('SELECT pg_advisory_xact_lock(:id)');
+            $lock->execute([':id' => $appointment['id']]);
+            $inFlight = $this->database->prepare(
+                "SELECT 1 FROM reminder_messages
+                 WHERE appointment_id = :id AND origin = 'siges' AND status = 'pending'
+                   AND attempted_at > LOCALTIMESTAMP(0) - INTERVAL '2 minutes' LIMIT 1"
+            );
+            $inFlight->execute([':id' => $appointment['id']]);
+            if ($inFlight->fetchColumn() !== false) {
+                throw new DuplicateSendException('Ya hay un envío en curso para esta cita.');
+            }
+
         $statement = $this->database->prepare(
             "INSERT INTO reminder_messages
-                (appointment_id, destination, patient_name, appointment_date, appointment_time, doctor_name, status)
-             VALUES (:appointment_id, :destination, :patient_name, :appointment_date, :appointment_time, :doctor_name, 'pending')
+                (appointment_id, destination, patient_name, appointment_date, appointment_time, doctor_name, status, sent_by_user_id)
+             VALUES (:appointment_id, :destination, :patient_name, :appointment_date, :appointment_time, :doctor_name, 'pending', :sent_by)
              RETURNING id"
         );
         $statement->execute([
@@ -175,25 +223,38 @@ final class AppointmentRepository
             ':appointment_date' => $appointment['appointment_date'],
             ':appointment_time' => $appointment['appointment_time'],
             ':doctor_name' => $appointment['doctor_name'],
+            ':sent_by' => function_exists('currentUserId') ? currentUserId() : null,
         ]);
 
-        return (int) $statement->fetchColumn();
+        $id = (int) $statement->fetchColumn();
+        if ($ownsTransaction) {
+                $this->database->commit();
+            }
+        } catch (Throwable $error) {
+            if ($ownsTransaction && $this->database->inTransaction()) {
+                $this->database->rollBack();
+            }
+            throw $error;
+        }
+
+        return $id;
     }
 
-    public function finishReminderAttempt(int $id, string $status, ?int $httpStatus = null): void
+    public function finishReminderAttempt(int $id, string $status, ?int $httpStatus = null, ?string $failureReason = null): void
     {
         if (!in_array($status, ['sent', 'failed'], true)) {
             throw new InvalidArgumentException('El resultado del envío no es válido.');
         }
         $statement = $this->database->prepare(
             "UPDATE reminder_messages
-             SET status = :status, http_status = :http_status,
+             SET status = :status, http_status = :http_status, failure_reason = :failure_reason,
                  sent_at = CASE WHEN CAST(:status_for_date AS text) = 'sent' THEN LOCALTIMESTAMP(0) ELSE NULL END
              WHERE id = :id AND status = 'pending'"
         );
         $statement->execute([
             ':status' => $status,
             ':http_status' => $httpStatus,
+            ':failure_reason' => $status === 'failed' ? $failureReason : null,
             ':status_for_date' => $status,
             ':id' => $id,
         ]);

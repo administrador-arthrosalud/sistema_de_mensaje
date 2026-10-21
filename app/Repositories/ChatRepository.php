@@ -126,11 +126,15 @@ final class ChatRepository
     public function createOutboundAttempt(string $destination, string $body): int
     {
         $statement = $this->database->prepare(
-            "INSERT INTO chat_messages (destination, direction, body, status)
-             VALUES (:destination, 'outbound', :body, 'pending')
+            "INSERT INTO chat_messages (destination, direction, body, status, sent_by_user_id)
+             VALUES (:destination, 'outbound', :body, 'pending', :sent_by)
              RETURNING id"
         );
-        $statement->execute([':destination' => $destination, ':body' => $body]);
+        $statement->execute([
+            ':destination' => $destination,
+            ':body' => $body,
+            ':sent_by' => function_exists('currentUserId') ? currentUserId() : null,
+        ]);
 
         return (int) $statement->fetchColumn();
     }

@@ -14,11 +14,11 @@ final class SigesAppointmentSyncService
             "INSERT INTO appointments
                 (source_key, siges_cita_id, patient_name, appointment_date, appointment_time, doctor_name,
                  specialty, sede_nombre, consultorio, modulo, codigo_ipress, appointment_note, visit_reason,
-                 destination, status)
+                 destination, status, siges_programacion_id)
              VALUES
                 (:source_key, :siges_cita_id, :patient_name, :appointment_date, :appointment_time, :doctor_name,
                  :specialty, :sede_nombre, :consultorio, :modulo, :codigo_ipress, :appointment_note, :visit_reason,
-                 :destination, :status)
+                 :destination, :status, :siges_programacion_id)
              ON CONFLICT (source_key) DO UPDATE SET
                 siges_cita_id = EXCLUDED.siges_cita_id,
                 patient_name = EXCLUDED.patient_name,
@@ -33,7 +33,8 @@ final class SigesAppointmentSyncService
                 appointment_note = EXCLUDED.appointment_note,
                 visit_reason = EXCLUDED.visit_reason,
                 destination = EXCLUDED.destination,
-                status = EXCLUDED.status"
+                status = EXCLUDED.status,
+                siges_programacion_id = EXCLUDED.siges_programacion_id"
         );
         $this->matchExistingAppointment = $this->local->prepare(
             "SELECT id FROM appointments
@@ -52,7 +53,8 @@ final class SigesAppointmentSyncService
                 appointment_time = :appointment_time, doctor_name = :doctor_name, specialty = :specialty,
                 sede_nombre = :sede_nombre, consultorio = :consultorio, modulo = :modulo,
                 codigo_ipress = :codigo_ipress, appointment_note = :appointment_note,
-                visit_reason = :visit_reason, destination = :destination, status = :status
+                visit_reason = :visit_reason, destination = :destination, status = :status,
+                siges_programacion_id = :siges_programacion_id
              WHERE id = :local_id"
         );
         $this->markAppointmentNotCurrent = $this->local->prepare(
@@ -90,7 +92,7 @@ final class SigesAppointmentSyncService
             $lastId = (int) $state;
             $snapshots = $this->fetchCurrentAppointmentSnapshots();
             $localRows = $this->local->query(
-                'SELECT siges_cita_id, appointment_date, appointment_time, status
+                'SELECT siges_cita_id, appointment_date, appointment_time, status, destination, siges_programacion_id
                  FROM appointments
                  WHERE siges_cita_id IS NOT NULL AND appointment_date >= CURRENT_DATE'
             )->fetchAll();
@@ -110,7 +112,10 @@ final class SigesAppointmentSyncService
                 if ($localRow === null
                     || (string) $localRow['appointment_date'] !== (string) $snapshot['appointment_date']
                     || substr((string) $localRow['appointment_time'], 0, 8) !== substr((string) $snapshot['appointment_time'], 0, 8)
-                    || (string) $localRow['status'] !== (string) $snapshot['status']) {
+                    || (string) $localRow['status'] !== (string) $snapshot['status']
+                    // Celular o programación (médico/consultorio) editados en SIGES sin cambiar fecha, hora ni estado.
+                    || self::extractDestination($snapshot['raw_contacts'] ?? null) !== $localRow['destination']
+                    || (int) ($localRow['siges_programacion_id'] ?? 0) !== (int) ($snapshot['siges_programacion_id'] ?? 0)) {
                     $changedIds[] = $sourceId;
                 }
             }
@@ -127,7 +132,7 @@ final class SigesAppointmentSyncService
             }
 
             $updateState = $this->local->prepare(
-                "UPDATE siges_sync_state SET last_cita_id = :last_cita_id WHERE sync_key = 'appointments'"
+                "UPDATE siges_sync_state SET last_cita_id = :last_cita_id, last_run_at = LOCALTIMESTAMP(0) WHERE sync_key = 'appointments'"
             );
             $updateState->execute([':last_cita_id' => $maxId]);
             $this->local->commit();
@@ -145,8 +150,10 @@ final class SigesAppointmentSyncService
      * SIGES guarda el celular en cita.contactos como JSON de texto, p. ej.
      * '["987654321"]' o con varios números: '["987654321","912345678"]'.
      * Devuelve el primer número que parezca un celular peruano válido, en
-     * formato local normalizado (con 51 antepuesto); null si no hay ninguno
-     * reconocible. Es solo un punto de partida: el envío sigue mostrando el
+     * formato local de 9 dígitos, sin el 51 (en SIGES algunos lo digitan con el
+     * código de país y otros sin él; aquí se unifica y el envío vuelve a
+     * anteponer el 51 en ChatbotApiClient::normalizeDestination); null si no
+     * hay ninguno reconocible. Es solo un punto de partida: el envío sigue mostrando el
      * número para que una persona lo revise o corrija antes de confirmar.
      */
     public static function extractDestination(?string $rawContacts): ?string
@@ -160,11 +167,17 @@ final class SigesAppointmentSyncService
         }
         foreach ($decoded as $candidate) {
             $digits = preg_replace('/\D+/', '', (string) $candidate) ?? '';
+            if (preg_match('/^(\d)\1{8}$/', $digits)) {
+                continue; // 999999999, 111111111…: relleno, no un celular real
+            }
             if (preg_match('/^9\d{8}$/', $digits)) {
-                return '51' . $digits;
+                return $digits;
+            }
+            if (preg_match('/^519\d{8}$/', $digits)) {
+                return substr($digits, 2);
             }
             if (preg_match('/^51\d{9}$/', $digits)) {
-                return $digits;
+                return $digits; // 51 + número que no empieza con 9: se conserva completo
             }
         }
 
@@ -190,6 +203,7 @@ final class SigesAppointmentSyncService
             ':visit_reason' => $row['visit_reason'],
             ':destination' => self::extractDestination($row['raw_contacts'] ?? null),
             ':status' => $row['status'] ?? '',
+            ':siges_programacion_id' => isset($row['siges_programacion_id']) ? (int) $row['siges_programacion_id'] : null,
         ];
 
         $this->matchExistingAppointment->execute([
@@ -219,7 +233,7 @@ final class SigesAppointmentSyncService
     {
         return $this->siges->query(
             "SELECT id AS siges_cita_id, fecha AS appointment_date, hora AS appointment_time,
-                    estado::text AS status
+                    estado::text AS status, contactos AS raw_contacts, programacion_id AS siges_programacion_id
              FROM public.cita
              WHERE fecha >= CURRENT_DATE AND tipo::text = 'NORMAL'
              ORDER BY id ASC"
@@ -275,6 +289,7 @@ final class SigesAppointmentSyncService
                 c.observacion AS appointment_note,
                 atencion.motivoconsulta AS visit_reason,
                 c.contactos AS raw_contacts,
+                c.programacion_id AS siges_programacion_id,
                 COALESCE(c.estado::text, '') AS status
             FROM public.cita c
             LEFT JOIN public.historia h ON h.id = c.historia_id

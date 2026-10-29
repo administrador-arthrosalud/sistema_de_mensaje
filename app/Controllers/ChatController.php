@@ -1,9 +1,11 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/../Contracts/ChatbotMessengerInterface.php';
+
 final class ChatController
 {
-    public function __construct(private ChatRepository $chats)
+    public function __construct(private ChatRepository $chats, private bool $chatbotConfigured)
     {
     }
 
@@ -12,7 +14,7 @@ final class ChatController
         $escape = static fn (mixed $value): string => htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $formatTime = static fn (string $dateTime): string => (new DateTimeImmutable($dateTime))->format('d/m H:i');
         $csrfToken = (string) ($_SESSION['csrf_token'] ?? '');
-        $chatbotConfigured = ChatbotApiClient::isConfigured();
+        $chatbotConfigured = $this->chatbotConfigured;
         $notification = $_SESSION['notification'] ?? null;
         unset($_SESSION['notification']);
 
@@ -41,7 +43,7 @@ final class ChatController
         require __DIR__ . '/../../views/chats.php';
     }
 
-    public function send(array $input, array $files = []): never
+    public function send(array $input, array $files = [], ?ChatbotMessengerInterface $chatbot = null): never
     {
         if (MessageAttachment::requestExceededPostLimit()) {
             $this->redirectWith('error', 'La imagen es demasiado grande; el máximo es 5 MB.', '');
@@ -49,8 +51,11 @@ final class ChatController
         $this->verifyCsrf($input);
 
         $destination = preg_replace('/\D+/', '', (string) ($input['destination'] ?? '')) ?? '';
-        if (!ChatbotApiClient::isConfigured()) {
+        if (!$this->chatbotConfigured) {
             $this->redirectWith('error', 'Configura CHATBOT_LINE_KEY antes de responder por el chat.', $destination);
+        }
+        if ($chatbot === null) {
+            $this->redirectWith('error', 'No se pudo preparar el cliente de WhatsApp.', $destination);
         }
 
         $message = trim((string) ($input['message'] ?? ''));
@@ -62,7 +67,6 @@ final class ChatController
         $apiAccepted = false;
         try {
             $attachment = MessageAttachment::fromUpload($files['attachment'] ?? null);
-            $chatbot = ChatbotApiClient::fromEnvironment();
             $normalized = $chatbot->normalizeDestination($destination);
             // La imagen no se guarda en la base de datos; el hilo solo registra su título.
             $storedBody = $attachment === null ? $message : '[Imagen: ' . $attachment->title . "]\n" . $message;

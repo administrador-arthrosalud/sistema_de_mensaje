@@ -1,23 +1,27 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/../Contracts/AppointmentRepositoryInterface.php';
+require_once __DIR__ . '/../Contracts/AppointmentReminderRepositoryInterface.php';
+require_once __DIR__ . '/../Contracts/ChatbotMessengerInterface.php';
+
 /**
  * Envío masivo de recordatorios para una fecha. El celular viene de SIGES
  * (appointments.destination, extraído de cita.contactos), pero sigue
  * requiriendo que una persona revise la lista y confirme una sola vez antes
  * de disparar los envíos (AGENTS.md: "El envío requiere una acción explícita
  * de una persona en el formulario y su confirmación"). No hay ningún
- * disparador automático/programado: esta clase solo actúa dentro de una
+ * disparador en esta clase (el envío automático de la víspera vive en
+ * scripts/auto-reminders.php y usa el mismo BulkReminderSender): solo actúa dentro de una
  * petición HTTP iniciada por alguien en el navegador.
  */
 final class BulkReminderController
 {
-    // Pausa entre envíos para no saturar la línea de Gestionalo; no hay
-    // documentación pública de sus límites de ráfaga.
-    private const PACE_MICROSECONDS = 400_000;
-
-    public function __construct(private AppointmentRepository $appointments)
-    {
+    public function __construct(
+        private AppointmentRepositoryInterface $appointments,
+        private AppointmentReminderRepositoryInterface $reminders,
+        private bool $chatbotConfigured,
+    ) {
     }
 
     public function index(array $query): void
@@ -27,7 +31,7 @@ final class BulkReminderController
         $today = new DateTimeImmutable('today');
         $date = $this->validDate((string) ($query['fecha'] ?? '')) ?? $today->format('Y-m-d');
         $csrfToken = (string) ($_SESSION['csrf_token'] ?? '');
-        $chatbotConfigured = ChatbotApiClient::isConfigured();
+        $chatbotConfigured = $this->chatbotConfigured;
         $notification = $_SESSION['notification'] ?? null;
         unset($_SESSION['notification']);
 
@@ -66,11 +70,14 @@ final class BulkReminderController
         require __DIR__ . '/../../views/bulk-reminders.php';
     }
 
-    public function send(array $input): never
+    public function send(array $input, ?ChatbotMessengerInterface $chatbot = null): never
     {
         $this->verifyCsrf($input);
-        if (!ChatbotApiClient::isConfigured()) {
+        if (!$this->chatbotConfigured) {
             $this->redirectWith('error', 'Configura CHATBOT_LINE_KEY antes de enviar recordatorios.', '');
+        }
+        if ($chatbot === null) {
+            $this->redirectWith('error', 'No se pudo preparar el cliente de WhatsApp.', '');
         }
         if (($input['confirm_transmission'] ?? '') !== 'yes') {
             $this->redirectWith('error', 'Confirma el envío antes de continuar.', (string) ($input['fecha'] ?? ''));
@@ -92,56 +99,11 @@ final class BulkReminderController
         // El lote puede durar minutos: se libera el bloqueo de la sesión para no congelar las demás pestañas
         // del mismo usuario. Se reabre al final para guardar el aviso de resultado.
         session_write_close();
-        $chatbot = ChatbotApiClient::fromEnvironment();
-        $sent = 0;
-        $failed = 0;
-        $skipped = 0;
-        $first = true;
-        $failures = [];
-        foreach ($ids as $id) {
-            if (!$first) {
-                usleep(self::PACE_MICROSECONDS);
-            }
-            $first = false;
-
-            // Se vuelve a validar cada cita (RESERVADO, no pasada, sin envío previo):
-            // pudo cambiar en SIGES o haberse enviado ya entre que se listó y se confirmó.
-            $appointment = $this->appointments->findReadyForBulkReminderById($id);
-            if ($appointment === null) {
-                $skipped++;
-                continue;
-            }
-
-            $attemptId = null;
-            try {
-                $destination = $chatbot->normalizeDestination((string) $appointment['destination']);
-                $message = ReminderMessageBuilder::build(
-                    (string) $appointment['patient_name'],
-                    (string) $appointment['appointment_date'],
-                    (string) $appointment['appointment_time'],
-                    (string) ($appointment['doctor_name'] ?? ''),
-                    $appointment['sede_nombre'] ?? null,
-                );
-                $attemptId = $this->appointments->createReminderAttempt($appointment, $destination);
-                $result = $chatbot->sendText($destination, $message);
-                $this->appointments->finishReminderAttempt($attemptId, 'sent', (int) $result['http_status']);
-                $sent++;
-            } catch (DuplicateSendException) {
-                $skipped++; // otro envío de la misma cita ya está en curso
-            } catch (Throwable $error) {
-                if ($attemptId !== null) {
-                    try {
-                        $httpStatus = $error instanceof ChatbotApiException ? $error->httpStatus : null;
-                        $this->appointments->finishReminderAttempt($attemptId, 'failed', $httpStatus, $error instanceof ChatbotApiException ? $error->failureReason() : null);
-                    } catch (Throwable) {
-                        error_log('No se pudo actualizar un intento del envío masivo.');
-                    }
-                }
-                error_log('Falló un envío del lote masivo: ' . get_class($error));
-                $failures[] = [(string) $appointment['patient_name'], $error instanceof ChatbotApiException ? ($error->failureReason() === 'no_whatsapp' ? 'número sin WhatsApp' : 'HTTP ' . $error->httpStatus . ($error->detail !== '' ? ': ' . $error->detail : '')) : get_class($error)];
-                $failed++;
-            }
-        }
+        $result = (new BulkReminderSender($this->appointments, $this->reminders, $chatbot))->send($ids);
+        $sent = $result['sent'];
+        $failed = $result['failed'];
+        $skipped = $result['skipped'];
+        $failures = $result['failures'];
 
         authStartSession();
         $message = sprintf('Envío masivo terminado: %d enviados, %d fallidos, %d ya no disponibles.', $sent, $failed, $skipped);

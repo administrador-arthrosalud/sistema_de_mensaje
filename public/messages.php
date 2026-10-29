@@ -17,7 +17,7 @@ if (!isLocalRequest()) {
 requireLogin();
 
 require_once __DIR__ . '/../config/database.php';
-require_once __DIR__ . '/../app/Repositories/AppointmentRepository.php';
+require_once __DIR__ . '/../app/Repositories/AppointmentReminderRepository.php';
 require_once __DIR__ . '/../app/Repositories/ChatRepository.php';
 
 $escape = static fn (mixed $value): string => htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -41,7 +41,7 @@ $total = 0;
 $pages = 1;
 $errorMessage = '';
 try {
-    $repository = new AppointmentRepository(databaseConnection());
+    $repository = new AppointmentReminderRepository(databaseConnection());
     $total = $repository->countSentReminders($filters);
     $pages = max(1, (int) ceil($total / $pageSize));
     $page = min($page, $pages);

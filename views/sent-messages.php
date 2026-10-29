@@ -92,7 +92,7 @@
                                     <td class="history-contact" data-label="Contacto"><strong><?= $escape($message['patient_name']) ?></strong><small><?= $escape($message['destination']) ?></small></td>
                                     <td class="schedule-cell" data-label="Cita"><span><?= $escape($formatDate($message['appointment_date'])) ?></span><strong class="time-cell"><?= $escape(substr((string) $message['appointment_time'], 0, 5)) ?></strong></td>
                                     <td class="doctor-cell" data-label="Médico"><strong><?= $escape($message['doctor_name'] ?: 'No asignado') ?></strong></td>
-                                    <td data-label="Origen"><span class="origin-pill <?= ($message['origin'] ?? 'siges') === 'manual' ? 'origin-manual' : '' ?>"><?= ($message['origin'] ?? 'siges') === 'manual' ? 'Temporal' : 'Cita SIGES' ?></span></td>
+                                    <td data-label="Origen"><span class="origin-pill <?= ($message['origin'] ?? 'siges') === 'manual' ? 'origin-manual' : '' ?>"><?= ($message['origin'] ?? 'siges') === 'manual' ? 'Temporal' : (!empty($message['auto_sent']) ? 'Automático' : 'Cita SIGES') ?></span></td>
                                     <td class="nowrap" data-label="Enviado"><?= $escape($formatDateTime($message['sent_at'])) ?></td>
                                     <td data-label="Resultado"><span class="delivery-status"><i></i>Aceptado por Gestionalo</span></td>
                                 </tr>

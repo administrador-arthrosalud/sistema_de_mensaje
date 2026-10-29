@@ -1,12 +1,9 @@
 <?php
 declare(strict_types=1);
 
-/** Ya hay otro envío en curso para la misma cita (doble clic, dos operadores). */
-final class DuplicateSendException extends RuntimeException
-{
-}
+require_once __DIR__ . '/../Contracts/AppointmentRepositoryInterface.php';
 
-final class AppointmentRepository
+final class AppointmentRepository implements AppointmentRepositoryInterface
 {
     public function __construct(private PDO $database)
     {
@@ -27,6 +24,28 @@ final class AppointmentRepository
     /** Excluye (alias "a") los celulares que Gestionalo ya dijo que no tienen WhatsApp; vuelven si el número cambia en SIGES. */
     private const NOT_NO_WHATSAPP = "AND NOT EXISTS (SELECT 1 FROM reminder_messages nw
         WHERE nw.failure_reason = 'no_whatsapp' AND nw.destination IN (a.destination, '51' || a.destination))";
+
+    /**
+     * Condiciones extra del envío automático (alias "a"), que no tiene una persona revisando la lista:
+     * no insistir tras 3 intentos fallidos (ni antes de 30 min desde el último fallo) y no reenviar si
+     * un intento quedó "pending" más de 2 min
+     * (Gestionalo pudo haberlo aceptado; lo revisa una persona en Estado del sistema).
+     */
+    private function autoExtra(bool $auto): string
+    {
+        if (!$auto) {
+            return '';
+        }
+
+        return " AND (SELECT COUNT(*) FROM reminder_messages f
+                      WHERE f.appointment_id = a.id AND f.origin = 'siges' AND f.status = 'failed') < 3
+               AND NOT EXISTS (SELECT 1 FROM reminder_messages r
+                      WHERE r.appointment_id = a.id AND r.origin = 'siges' AND r.status = 'failed'
+                        AND r.attempted_at > LOCALTIMESTAMP(0) - INTERVAL '30 minutes')
+               AND NOT EXISTS (SELECT 1 FROM reminder_messages p
+                      WHERE p.appointment_id = a.id AND p.origin = 'siges' AND p.status = 'pending'
+                        AND p.attempted_at <= LOCALTIMESTAMP(0) - INTERVAL '2 minutes') ";
+    }
 
     public function pendingVersion(): string
     {
@@ -116,7 +135,7 @@ final class AppointmentRepository
      * un envío ya aceptado. Es la lista que revisa el personal antes del envío
      * masivo; cada fila sigue siendo editable/excluible antes de confirmar.
      */
-    public function findReadyForBulkReminder(string $date): array
+    public function findReadyForBulkReminder(string $date, bool $auto = false): array
     {
         $statement = $this->database->prepare(
             "SELECT id, patient_name, appointment_date, appointment_time, doctor_name, sede_nombre, destination
@@ -127,7 +146,7 @@ final class AppointmentRepository
                AND NOT EXISTS (
                    SELECT 1 FROM reminder_messages rm WHERE rm.appointment_id = a.id AND rm.status = 'sent'
                )
-               " . self::NOT_NO_WHATSAPP . "
+               " . self::NOT_NO_WHATSAPP . $this->autoExtra($auto) . "
              ORDER BY appointment_time ASC, patient_name ASC"
         );
         $statement->execute([':date' => $date]);
@@ -170,7 +189,7 @@ final class AppointmentRepository
     }
 
     /** Vuelve a validar una cita puntual justo antes de enviarle, por si cambió entre que se listó y se confirmó. */
-    public function findReadyForBulkReminderById(int $id): ?array
+    public function findReadyForBulkReminderById(int $id, bool $auto = false): ?array
     {
         $statement = $this->database->prepare(
             "SELECT id, patient_name, appointment_date, appointment_time, doctor_name, sede_nombre, destination
@@ -180,136 +199,13 @@ final class AppointmentRepository
                AND NOT EXISTS (
                    SELECT 1 FROM reminder_messages rm WHERE rm.appointment_id = a.id AND rm.status = 'sent'
                )
-               " . self::NOT_NO_WHATSAPP . "
+               " . self::NOT_NO_WHATSAPP . $this->autoExtra($auto) . "
              LIMIT 1"
         );
         $statement->execute([':id' => $id]);
         $appointment = $statement->fetch();
 
         return $appointment === false ? null : $appointment;
-    }
-
-    public function createReminderAttempt(array $appointment, string $destination): int
-    {
-        // El bloqueo por cita serializa dos peticiones simultáneas: la segunda espera a que la primera
-        // registre su intento y entonces lo ve "pending", en vez de enviar el mismo recordatorio dos veces.
-        $ownsTransaction = !$this->database->inTransaction();
-        if ($ownsTransaction) {
-            $this->database->beginTransaction();
-        }
-        try {
-            $lock = $this->database->prepare('SELECT pg_advisory_xact_lock(:id)');
-            $lock->execute([':id' => $appointment['id']]);
-            $inFlight = $this->database->prepare(
-                "SELECT 1 FROM reminder_messages
-                 WHERE appointment_id = :id AND origin = 'siges' AND status = 'pending'
-                   AND attempted_at > LOCALTIMESTAMP(0) - INTERVAL '2 minutes' LIMIT 1"
-            );
-            $inFlight->execute([':id' => $appointment['id']]);
-            if ($inFlight->fetchColumn() !== false) {
-                throw new DuplicateSendException('Ya hay un envío en curso para esta cita.');
-            }
-
-        $statement = $this->database->prepare(
-            "INSERT INTO reminder_messages
-                (appointment_id, destination, patient_name, appointment_date, appointment_time, doctor_name, status, sent_by_user_id)
-             VALUES (:appointment_id, :destination, :patient_name, :appointment_date, :appointment_time, :doctor_name, 'pending', :sent_by)
-             RETURNING id"
-        );
-        $statement->execute([
-            ':appointment_id' => $appointment['id'],
-            ':destination' => $destination,
-            ':patient_name' => $appointment['patient_name'],
-            ':appointment_date' => $appointment['appointment_date'],
-            ':appointment_time' => $appointment['appointment_time'],
-            ':doctor_name' => $appointment['doctor_name'],
-            ':sent_by' => function_exists('currentUserId') ? currentUserId() : null,
-        ]);
-
-        $id = (int) $statement->fetchColumn();
-        if ($ownsTransaction) {
-                $this->database->commit();
-            }
-        } catch (Throwable $error) {
-            if ($ownsTransaction && $this->database->inTransaction()) {
-                $this->database->rollBack();
-            }
-            throw $error;
-        }
-
-        return $id;
-    }
-
-    public function finishReminderAttempt(int $id, string $status, ?int $httpStatus = null, ?string $failureReason = null): void
-    {
-        if (!in_array($status, ['sent', 'failed'], true)) {
-            throw new InvalidArgumentException('El resultado del envío no es válido.');
-        }
-        $statement = $this->database->prepare(
-            "UPDATE reminder_messages
-             SET status = :status, http_status = :http_status, failure_reason = :failure_reason,
-                 sent_at = CASE WHEN CAST(:status_for_date AS text) = 'sent' THEN LOCALTIMESTAMP(0) ELSE NULL END
-             WHERE id = :id AND status = 'pending'"
-        );
-        $statement->execute([
-            ':status' => $status,
-            ':http_status' => $httpStatus,
-            ':failure_reason' => $status === 'failed' ? $failureReason : null,
-            ':status_for_date' => $status,
-            ':id' => $id,
-        ]);
-    }
-
-    public function countSentReminders(array $filters): int
-    {
-        [$where, $parameters] = $this->buildSentWhere($filters);
-        $statement = $this->database->prepare("SELECT COUNT(*) FROM reminder_messages WHERE {$where}");
-        $statement->execute($parameters);
-
-        return (int) $statement->fetchColumn();
-    }
-
-    public function findSentReminders(array $filters, int $limit, int $offset): array
-    {
-        [$where, $parameters] = $this->buildSentWhere($filters);
-        $statement = $this->database->prepare(
-            "SELECT id, origin, patient_name, destination, appointment_date, appointment_time, doctor_name, sent_at, http_status
-             FROM reminder_messages
-             WHERE {$where}
-             ORDER BY sent_at DESC, id DESC
-             LIMIT :limit OFFSET :offset"
-        );
-        foreach ($parameters as $name => $value) {
-            $statement->bindValue($name, $value, PDO::PARAM_STR);
-        }
-        $statement->bindValue(':limit', $limit, PDO::PARAM_INT);
-        $statement->bindValue(':offset', $offset, PDO::PARAM_INT);
-        $statement->execute();
-
-        return $statement->fetchAll();
-    }
-
-    private function buildSentWhere(array $filters): array
-    {
-        $clauses = ["status = 'sent'"];
-        $parameters = [];
-        if ($filters['search'] !== '') {
-            $clauses[] = '(patient_name ILIKE :search_patient OR destination ILIKE :search_destination OR doctor_name ILIKE :search_doctor)';
-            $term = '%' . $filters['search'] . '%';
-            $parameters[':search_patient'] = $term;
-            $parameters[':search_destination'] = $term;
-            $parameters[':search_doctor'] = $term;
-        }
-        if ($filters['date_from'] !== '') {
-            $clauses[] = 'sent_at >= :date_from';
-            $parameters[':date_from'] = $filters['date_from'] . ' 00:00:00';
-        }
-        if ($filters['date_to'] !== '') {
-            $clauses[] = 'sent_at < CAST(:date_to AS date) + 1';
-            $parameters[':date_to'] = $filters['date_to'];
-        }
-
-        return [implode(' AND ', $clauses), $parameters];
     }
 
     private function buildWhere(array $filters): array

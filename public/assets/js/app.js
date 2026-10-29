@@ -50,11 +50,16 @@
         LINCE: 'Av. P.º de la República 2772, Lince 15046',
         'LINCE - CONSULTORIO 3': 'Jr. Joaquín Bernal 344, Lince',
     };
+    const SEDE_MAP_LINKS = {
+        LIMA: 'https://maps.app.goo.gl/uuT3UsKLBS57XV4Z9',
+        LINCE: 'https://maps.app.goo.gl/GJPnx7zYda94qndy5',
+        'LINCE - CONSULTORIO 3': 'https://maps.app.goo.gl/SSGKyWAWZuA3S9xC7',
+    };
     const sedeLine = (sede) => {
         if (!sede) return null;
         const key = String(sede).trim().toUpperCase();
         const address = SEDE_ADDRESSES[key];
-        return address ? `📍*Sede ${key}:* ${address}` : `📍*Sede:* ${titleCase(sede)}`;
+        return address ? `📍*Sede ${key}:* ${address}\n🗺️*Mapa:* ${SEDE_MAP_LINKS[key]}` : `📍*Sede:* ${titleCase(sede)}`;
     };
     const lowerWords = new Set(['de', 'del', 'la', 'las', 'los', 'y']);
     const titleCase = (value) => String(value || '').trim().toLocaleLowerCase('es-PE').split(/\s+/)

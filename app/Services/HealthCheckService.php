@@ -84,6 +84,34 @@ final class HealthCheckService
         $all = (int) $this->database->query("SELECT COUNT(*) FROM reminder_messages WHERE status = 'sent'")->fetchColumn();
         $add('Envíos de recordatorios', 'Historial total', 'info', $all . ' recordatorios aceptados desde el inicio.');
 
+        // Envío automático de la víspera (migración 015)
+        $settings = new SettingsRepository($this->database);
+        $autoOn = $settings->autoRemindersEnabled();
+        $add('Envío automático', 'Estado', $autoOn ? 'ok' : 'info', $autoOn
+            ? 'ACTIVO: cada día a las ' . AutoReminderScheduler::SEND_HOUR . ':00 se avisan las citas del día siguiente (las del lunes, el sábado y el domingo).'
+            : 'Pausado: no se envía nada automáticamente. Los envíos manuales siguen disponibles.');
+        $lastRun = $settings->get(SettingsRepository::AUTO_LAST_RUN);
+        if ($lastRun === '') {
+            $add('Envío automático', 'Worker', $autoOn ? 'fail' : 'warn', 'El worker nunca registró actividad. Revisa el contenedor siges-dashboard-auto-reminders.');
+        } else {
+            $runAge = max(0, (new DateTimeImmutable('now'))->getTimestamp() - (new DateTimeImmutable($lastRun))->getTimestamp());
+            $runStatus = $runAge <= 180 ? 'ok' : ($autoOn ? 'fail' : 'warn');
+            $add('Envío automático', 'Worker', $runStatus, 'Última revisión hace ' . $this->duration($runAge) . ($runStatus === 'ok' ? '.' : ' (debería ser cada minuto). Revisa el contenedor siges-dashboard-auto-reminders.'));
+        }
+        $summary = json_decode($settings->get(SettingsRepository::AUTO_LAST_SUMMARY, '{}'), true);
+        if (is_array($summary) && isset($summary['dates']) && is_array($summary['dates'])) {
+            $sentTotal = $failedTotal = 0;
+            foreach ($summary['dates'] as $counts) {
+                $sentTotal += (int) ($counts['sent'] ?? 0);
+                $failedTotal += (int) ($counts['failed'] ?? 0);
+            }
+            $add('Envío automático', 'Último envío', $failedTotal === 0 ? 'ok' : 'warn', (string) ($summary['at'] ?? '') . ': ' . $sentTotal . ' enviados, ' . $failedTotal . ' fallidos.');
+        }
+        $autoStats = $this->database->query(
+            "SELECT COUNT(*) FILTER (WHERE status = 'sent') AS sent FROM reminder_messages WHERE auto_sent AND attempted_at >= LOCALTIMESTAMP(0) - INTERVAL '24 hours'"
+        )->fetch();
+        $add('Envío automático', 'Enviados automáticamente (24 h)', 'info', (string) (int) $autoStats['sent']);
+
         // Configuración
         $configured = ChatbotApiClient::isConfigured();
         $add('Configuración', 'Gestionalo (CHATBOT_LINE_KEY)', $configured ? 'ok' : 'fail', $configured ? 'Configurado.' : 'Falta la serie; no se podrá enviar ningún mensaje.');

@@ -58,6 +58,22 @@
                 <a class="button-primary health-refresh" href="health.php">Volver a verificar</a>
             </section>
 
+            <section class="health-card">
+                <h2>Alertas técnicas por WhatsApp</h2>
+                <p class="heading-copy">Se enviarán resúmenes agrupados de fallos de la API y del worker. No incluyen nombres, teléfonos de pacientes ni mensajes. Si WhatsApp no está disponible, el aviso queda pendiente y se reintenta.</p>
+                <?php if ($alertSettingsError !== ''): ?>
+                    <div class="alert" role="alert"><?= $escape($alertSettingsError) ?></div>
+                <?php endif; ?>
+                <form method="post" action="health.php" class="health-row">
+                    <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                    <input type="hidden" name="action" value="save_error_alert_destination">
+                    <label for="error-alert-destination"><strong>Número que recibirá las alertas</strong></label>
+                    <input id="error-alert-destination" name="error_alert_destination" type="tel" inputmode="tel" autocomplete="tel" maxlength="24" placeholder="+51 963 446 501" value="<?= $escape($alertDestination !== '' ? '+' . (preg_replace('/\D+/', '', $alertDestination) ?? '') : '') ?>">
+                    <button type="submit" class="button-primary">Guardar número</button>
+                    <small>Déjalo vacío y guarda para desactivar los avisos.</small>
+                </form>
+            </section>
+
             <?php if ($errorMessage !== ''): ?>
                 <div class="alert" role="alert"><?= $escape($errorMessage) ?></div>
             <?php else: ?>
@@ -68,6 +84,15 @@
                 <?php foreach ($groups as $group => $rows): ?>
                     <section class="health-card">
                         <h2><?= $escape($group) ?></h2>
+                        <?php if ($group === 'Envío automático'): ?>
+                            <form method="post" action="health.php" class="health-row"
+                                  onsubmit="return confirm(<?= $autoEnabled ? "'¿Pausar el envío automático de recordatorios?'" : "'¿Activar el envío automático? A partir de las 17:00 se enviarán por WhatsApp, sin confirmación, los recordatorios del día siguiente.'" ?>);">
+                                <input type="hidden" name="csrf_token" value="<?= $escape($csrfToken) ?>">
+                                <input type="hidden" name="action" value="toggle_auto_reminders">
+                                <input type="hidden" name="auto_reminders" value="<?= $autoEnabled ? 'off' : 'on' ?>">
+                                <button type="submit" class="button-primary"><?= $autoEnabled ? 'Pausar envío automático' : 'Activar envío automático' ?></button>
+                            </form>
+                        <?php endif; ?>
                         <?php foreach ($rows as $row): ?>
                             <div class="health-row">
                                 <span class="health-badge health-<?= $escape($row['status']) ?>"><?= $escape(['ok' => 'OK', 'warn' => 'Aviso', 'fail' => 'Falla', 'info' => 'Info'][$row['status']]) ?></span>

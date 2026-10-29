@@ -43,13 +43,22 @@ $check('Registrar intento de recordatorio temporal', function () use ($manual, &
 });
 $check('Registrar intento de recordatorio de cita SIGES', function () use ($database): void {
     $row = ['id' => 999000002, 'patient_name' => 'PRUEBA', 'appointment_date' => date('Y-m-d'), 'appointment_time' => '10:00', 'doctor_name' => ''];
-    (new AppointmentRepository($database))->createReminderAttempt($row, '51900000000');
+    (new AppointmentReminderRepository($database))->createReminderAttempt($row, '51900000000');
 });
 $check('Registrar respuesta de chat saliente', function () use ($database): void {
     (new ChatRepository($database))->createOutboundAttempt('51900000000', 'prueba');
 });
 $check('Guardar mensaje entrante de chat', function () use ($database): void {
     (new ChatRepository($database))->insertInbound('51900000000', 'prueba', null);
+});
+$check('Registrar intento de recordatorio automático', function () use ($database): void {
+    $row = ['id' => 999000003, 'patient_name' => 'PRUEBA', 'appointment_date' => date('Y-m-d'), 'appointment_time' => '10:00', 'doctor_name' => ''];
+    (new AppointmentReminderRepository($database))->createReminderAttempt($row, '51900000000', true);
+});
+$check('Guardar ajuste del envío automático', function () use ($database): void {
+    $settings = new SettingsRepository($database);
+    $settings->set(SettingsRepository::AUTO_LAST_RUN, date('Y-m-d H:i:s'));
+    $settings->autoRemindersEnabled();
 });
 $check('Leer latido del worker', function () use ($database): void {
     $database->query('SELECT last_run_at FROM siges_sync_state')->fetchAll();

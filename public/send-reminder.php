@@ -10,6 +10,7 @@ authStartSession();
 require_once __DIR__ . '/../config/access.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../app/Repositories/AppointmentRepository.php';
+require_once __DIR__ . '/../app/Repositories/AppointmentReminderRepository.php';
 require_once __DIR__ . '/../app/Services/ChatbotApiClient.php';
 require_once __DIR__ . '/../app/Services/MessageAttachment.php';
 
@@ -20,7 +21,7 @@ function finishWithNotification(string $type, string $message): never
     exit;
 }
 
-function markAttemptFailed(?AppointmentRepository $repository, ?int $attemptId, ?int $httpStatus = null, ?string $failureReason = null): void
+function markAttemptFailed(?AppointmentReminderRepository $repository, ?int $attemptId, ?int $httpStatus = null, ?string $failureReason = null): void
 {
     if ($repository === null || $attemptId === null) {
         return;
@@ -62,6 +63,7 @@ if (!ChatbotApiClient::isConfigured()) {
 }
 
 $repository = null;
+$reminderRepository = null;
 $attemptId = null;
 $apiAccepted = false;
 
@@ -72,7 +74,9 @@ try {
         throw new InvalidArgumentException('La cita indicada no es válida.');
     }
 
-    $repository = new AppointmentRepository(databaseConnection());
+    $database = databaseConnection();
+    $repository = new AppointmentRepository($database);
+    $reminderRepository = new AppointmentReminderRepository($database);
     $appointment = $repository->findPendingById($appointmentId);
     if ($appointment === null) {
         finishWithNotification('error', 'La cita ya no está pendiente o no existe. Actualiza el dashboard.');
@@ -89,20 +93,20 @@ try {
 
     $chatbot = ChatbotApiClient::fromEnvironment();
     $destination = $chatbot->normalizeDestination($destination);
-    $attemptId = $repository->createReminderAttempt($appointment, $destination);
+    $attemptId = $reminderRepository->createReminderAttempt($appointment, $destination);
     $result = $chatbot->sendMessage($destination, $message, $attachment);
     $apiAccepted = true;
-    $repository->finishReminderAttempt($attemptId, 'sent', (int) $result['http_status']);
+    $reminderRepository->finishReminderAttempt($attemptId, 'sent', (int) $result['http_status']);
 
     finishWithNotification('success', 'Gestionalo aceptó el recordatorio; quedó registrado en Contactos enviados.');
 } catch (DuplicateSendException) {
     finishWithNotification('error', 'Ya hay un envío en curso para esta cita. Espera unos segundos y revisa Contactos enviados.');
 } catch (InvalidArgumentException $error) {
-    markAttemptFailed($repository, $attemptId);
+    markAttemptFailed($reminderRepository, $attemptId);
     finishWithNotification('error', $error->getMessage());
 } catch (ChatbotApiException $error) {
     error_log('Gestionalo rechazó un recordatorio con HTTP ' . $error->httpStatus . '.');
-    markAttemptFailed($repository, $attemptId, $error->httpStatus, $error->failureReason());
+    markAttemptFailed($reminderRepository, $attemptId, $error->httpStatus, $error->failureReason());
     if ($error->failureReason() === 'no_whatsapp') {
         finishWithNotification('error', 'Ese número no tiene WhatsApp (Gestionalo no lo encontró). Confirma el celular con el paciente; si lo corrigen en SIGES, se actualiza solo.');
     }
@@ -121,6 +125,6 @@ try {
     if ($apiAccepted) {
         finishWithNotification('error', 'Gestionalo aceptó el recordatorio, pero no se pudo actualizar el historial. Revisa Contactos enviados antes de reenviarlo.');
     }
-    markAttemptFailed($repository, $attemptId);
+    markAttemptFailed($reminderRepository, $attemptId);
     finishWithNotification('error', 'No se pudo enviar. Revisa la conexión y la configuración de la API.');
 }

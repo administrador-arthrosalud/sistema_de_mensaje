@@ -27,12 +27,17 @@ require_once __DIR__ . '/../app/Services/MessageAttachment.php';
 require_once __DIR__ . '/../app/Controllers/ChatController.php';
 
 try {
-    $controller = new ChatController(new ChatRepository(databaseConnection()));
+    $chatbotConfigured = ChatbotApiClient::isConfigured();
+    $controller = new ChatController(new ChatRepository(databaseConnection()), $chatbotConfigured);
     $action = (string) ($_GET['action'] ?? '');
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         match ($action) {
-            'send' => $controller->send($_POST, $_FILES),
+            'send' => $controller->send(
+                $_POST,
+                $_FILES,
+                $chatbotConfigured ? ChatbotApiClient::fromEnvironment() : null,
+            ),
             default => (static function (): never {
                 http_response_code(404);
                 exit('Acción no encontrada.');

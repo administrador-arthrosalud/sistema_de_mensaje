@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/../Contracts/ChatbotMessengerInterface.php';
+
 final class ChatbotApiException extends RuntimeException
 {
     /** $detail: inicio de la respuesta de Gestionalo, con las secuencias largas de dígitos (celulares) ocultas. */
@@ -29,7 +31,7 @@ final class ChatbotApiException extends RuntimeException
  * Cliente PHP para el endpoint de mensajes de Gestionalo.
  * No expone credenciales en excepciones ni registra el contenido enviado.
  */
-final class ChatbotApiClient
+final class ChatbotApiClient implements ChatbotMessengerInterface
 {
     public function __construct(
         private string $baseUrl,
@@ -155,7 +157,18 @@ final class ChatbotApiClient
         return $this->sendMedia($destination, $caption, $mimeType, basename($filePath), base64_encode($contents));
     }
 
-    private function post(string $destination, array $payload): array
+    /** Envía un resumen operativo por WhatsApp sin volver a encolarlo si falla. */
+    public function sendOperationalAlert(string $destination, string $message): array
+    {
+        $message = trim($message);
+        if ($message === '') {
+            throw new InvalidArgumentException('El mensaje no puede estar vacío.');
+        }
+
+        return $this->post($destination, ['message' => $message], false);
+    }
+
+    private function post(string $destination, array $payload, bool $reportOperationalErrors = true): array
     {
         $destination = $this->normalizeDestination($destination);
 
@@ -164,6 +177,9 @@ final class ChatbotApiClient
         $body = http_build_query($payload, '', '&', PHP_QUERY_RFC3986);
         $curl = curl_init($url);
         if ($curl === false) {
+            if ($reportOperationalErrors) {
+                self::recordOperationalFailure('api_client_init_error');
+            }
             throw new RuntimeException('No se pudo iniciar la conexión con el chatbot.');
         }
 
@@ -187,11 +203,18 @@ final class ChatbotApiClient
         curl_close($curl);
 
         if ($responseBody === false) {
+            if ($reportOperationalErrors) {
+                self::recordOperationalFailure('api_transport_error');
+            }
             throw new RuntimeException('Falló la conexión con la API del chatbot: ' . $curlError);
         }
         if ($httpStatus < 200 || $httpStatus >= 300) {
             $detail = ChatbotApiException::sanitizeDetail((string) $responseBody);
             error_log('Gestionalo respondió HTTP ' . $httpStatus . ': ' . ($detail !== '' ? $detail : '(sin cuerpo)'));
+            if ($reportOperationalErrors) {
+                $reason = stripos($detail, 'No LID for user') !== false ? 'api_no_whatsapp' : 'api_http_error';
+                self::recordOperationalFailure($reason, $httpStatus);
+            }
             throw new ChatbotApiException($httpStatus, $detail);
         }
 
@@ -199,5 +222,11 @@ final class ChatbotApiClient
             'http_status' => $httpStatus,
             'response' => $responseBody,
         ];
+    }
+
+    private static function recordOperationalFailure(string $errorCode, ?int $httpStatus = null): void
+    {
+        require_once __DIR__ . '/SystemErrorAlertQueue.php';
+        SystemErrorAlertQueue::record('chatbot_api', $errorCode, $httpStatus);
     }
 }

@@ -77,6 +77,14 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # Envío automático de recordatorios de la víspera (17:00; lun se avisa sáb y dom).
+  # Solo envía si un administrador lo enciende en Estado del sistema (apagado por
+  # defecto). Usa la base local con el rol de la aplicación y llama a Gestionalo.
+  auto-reminders:
+    <<: *php-app
+    container_name: siges-dashboard-auto-reminders
+    command: ["php", "scripts/auto-reminders.php"]
+
   # Expone SOLO /chat-webhook.php a lo que apunte un túnel público o un dominio,
   # nunca el resto de la app. No arranca con "docker compose up -d": requiere
   # --profile webhook. Ver docs/operacion-local.md.

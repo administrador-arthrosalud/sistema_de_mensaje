@@ -1,6 +1,6 @@
 # Estado del proyecto y contexto para agentes
 
-> **Lee esto primero.** Resume qué es el sistema, dónde está desplegado, qué se ha hecho, por qué se decidió cada cosa y qué falta. Después lee `AGENTS.md` (reglas obligatorias) y `docs/arquitectura.md`. Última actualización: **2026-10-19**.
+> **Lee esto primero.** Resume qué es el sistema, dónde está desplegado, qué se ha hecho, por qué se decidió cada cosa y qué falta. Después lee `AGENTS.md` (reglas obligatorias) y `docs/arquitectura.md`. Última actualización: **2026-10-29**.
 
 ## 1. Qué es
 
@@ -48,13 +48,13 @@ El rol `operador` solo se diferencia de `admin` en que no ve ni accede a **Estad
 2. **Celular sin el 51 (`appointments.destination`, migración 012).** En SIGES algunos celulares se digitan con el código de país y otros sin él. `SigesAppointmentSyncService::extractDestination()` guarda siempre **9 dígitos sin el 51**, descarta los de relleno (todos los dígitos iguales, p. ej. `999999999`) y conserva completo un `51` + número que no empiece con 9. **Al enviar**, `ChatbotApiClient::normalizeDestination()` vuelve a anteponer el 51: Gestionalo lo necesita (235 envíos exitosos se hicieron así) y `reminder_messages.destination` guarda el número exacto enviado. Se comprobó cruzando con SIGES que los fallos **no** se deben al 51.
 3. **Números sin WhatsApp (migración 014).** Si Gestionalo responde HTTP 500 con `"No LID for user"`, el número no existe en WhatsApp (o está mal digitado en SIGES). Se guarda `reminder_messages.failure_reason = 'no_whatsapp'`; esos números se **excluyen del envío masivo**, se marcan en la agenda ("Sin WhatsApp: verifica el celular") y el masivo avisa cuántos hay. Si el celular cambia en SIGES vuelven a ofrecerse solos. El histórico (7 números, 37 intentos) se rellenó en la migración.
 4. **Detección de cambios (migración 013).** El worker relee una cita si cambian fecha, hora, estado, **celular o programación** (médico/consultorio, `siges_programacion_id`).
-5. **Sin envíos duplicados.** `AppointmentRepository::createReminderAttempt()` toma un bloqueo por cita (`pg_advisory_xact_lock`) y lanza `DuplicateSendException` si hay otro intento `pending` de menos de 2 min. El masivo libera la sesión (`session_write_close()`) mientras envía y la reabre al final.
+5. **Sin envíos duplicados.** `AppointmentReminderRepository::createReminderAttempt()` toma un bloqueo por cita (`pg_advisory_xact_lock`) y lanza `DuplicateSendException` si hay otro intento `pending` de menos de 2 min. El masivo libera la sesión (`session_write_close()`) mientras envía y la reabre al final.
 5b. **Auditoría:** cada envío guarda `sent_by_user_id` (`currentUserId()`).
 6. **Motivo de error visible.** `ChatbotApiException` guarda un extracto sanitizado de la respuesta de Gestionalo (`detail`, celulares tapados con `***`); el aviso del masivo nombra a los pacientes que fallaron y por qué; el log registra `Gestionalo respondió HTTP N: ...`.
 
 ## 5. Migraciones aplicadas
 
-`006` unaccent · `007` sede en contactos temporales · `008` `appointments.destination` · `009` tercera sede · `010` usuarios + `sent_by_user_id` · `011` latido del worker (`siges_sync_state.last_run_at`) · `012` destino sin el 51 · `013` `siges_programacion_id` · `014` `failure_reason`. **La siguiente es la `015`.** Cada una se aplica con `docker exec -i siges-dashboard-db psql -U postgres -d siges_dashboard < database/migrations/0NN_*.sql` y debe reflejarse en `database/schema.sql` y `database/grants.sql`.
+`006` unaccent · `007` sede en contactos temporales · `008` `appointments.destination` · `009` tercera sede · `010` usuarios + `sent_by_user_id` · `011` latido del worker (`siges_sync_state.last_run_at`) · `012` destino sin el 51 · `013` `siges_programacion_id` · `014` `failure_reason`. `015` interruptor y marca del envío automático (`app_settings`, `reminder_messages.auto_sent`). `016` cola de alertas técnicas agregadas para WhatsApp (`system_error_alerts`). **La siguiente es la `017`.** Cada una se aplica con `docker exec -i siges-dashboard-db psql -U postgres -d siges_dashboard < database/migrations/0NN_*.sql` y debe reflejarse en `database/schema.sql` y `database/grants.sql`.
 
 ## 6. Cómo verificar que todo funciona (hay 4 scripts)
 
@@ -76,6 +76,26 @@ Auditoría completa en `docs/auditoria-seguridad.md` (0 fallas, hallazgos abiert
 - **Webhook de Gestionalo:** el formato del payload no está confirmado; el webhook no está publicado en internet. Pasos en `docs/operacion-local.md`.
 - HTTPS, cabeceras, respaldos, roles reales, pantalla de usuarios, mostrar quién envió en el historial (ver `docs/mejoras-pendientes.md` y `docs/auditoria-seguridad.md`).
 - Hay cambios **sin commit** (todo el trabajo de login, scripts, migraciones 010–014, marca y correcciones). No hagas commit salvo que el usuario lo pida.
+
+## 8b. Envío automático de la víspera (2026-10-24)
+
+Pedido y autorizado por el dueño: a las 17:00 se envían solos los recordatorios del día siguiente (los del lunes, el sábado y el domingo). Detalle en `docs/arquitectura.md`. Contenedor nuevo `siges-dashboard-auto-reminders` (`docker compose -f docker-compose.yml -f docker-compose.lan.yml up -d auto-reminders`; tras cambiar `app/` o `scripts/auto-reminders.php` ejecuta `restart auto-reminders`). **Queda apagado**: un administrador debe pulsar "Activar envío automático" en Estado del sistema. Verificado solo con simulación (`--dry-run`, `$transport` simulado y rollback); no se envió ningún mensaje real. Antes del primer encendido revisa `--dry-run` a las 17:00 y compáralo con `bulk-reminders.php`. Limitación: pausar el interruptor no corta un lote ya en curso.
+
+## 8c. Alertas de errores por WhatsApp (2026-10-28)
+
+La migración `016_add_system_error_alerts.sql` crea una cola local que agrupa fallos por intervalos de cinco minutos y código técnico. `ChatbotApiClient` registra errores de transporte y HTTP sin guardar destinos, cuerpos ni contenido de mensajes; `siges-dashboard-auto-reminders` intenta entregar los resúmenes cada minuto. Si Gestionalo no responde, se reintentan cada cinco minutos. El administrador configura el destino en Estado del sistema; dejarlo vacío desactiva las alertas. No se envían avisos históricos ni mensajes de prueba. Si PostgreSQL o todo el worker están caídos, no puede llegar un aviso durante esa caída; los logs de Docker quedan como respaldo local.
+
+## 8d. Vigilancia local del host
+
+La tarea de Windows `Chatbot-Incident-Watchdog` ejecuta `scripts/watchdog.ps1` al iniciar sesión del usuario y revisa Docker y los latidos cada minuto. Encola eventos técnicos para la misma entrega por WhatsApp y conserva eventos pendientes en `%LOCALAPPDATA%\ChatbotIncidentWatchdog` si la base o Docker no están disponibles. Puede iniciar contenedores detenidos por un error y reiniciar `sync` si su latido supera 60 segundos. Solo reinicia `auto-reminders` si lleva 30 minutos sin latido y los recordatorios automáticos están pausados; si están activos, informa sin interrumpir un posible lote. No cambia código ni vuelve a vincular una sesión de WhatsApp. Los logs locales están en `watchdog.log`; la tarea requiere que Windows esté iniciado y el usuario haya iniciado sesión.
+
+## 8e. Enlaces de ubicación en recordatorios
+
+Los recordatorios muestran el enlace de Google Maps de la sede: Pinillos (LIMA), Av. P.º de la República (LINCE) o Jr. Joaquín Bernal (LINCE - CONSULTORIO 3). Mantén los mismos enlaces en `SEDE_MAP_LINKS` de `public/assets/js/app.js` y `app/Services/ReminderMessageBuilder.php` para que los mensajes individuales y masivos coincidan.
+
+## 8f. Separación de repositorios y dependencias (2026-10-29)
+
+`AppointmentRepository` se ocupa de consultar y filtrar citas SIGES. `AppointmentReminderRepository` registra intentos y consulta el historial de recordatorios. `BulkReminderSender` recibe contratos para citas, historial y mensajería; `BulkReminderController` usa los contratos de citas e historial, y los controladores de chat y recordatorios reciben el contrato de mensajería al enviar. `ChatbotApiClient` implementa ese contrato. Esta separación no cambia filtros, textos, registros ni reglas de envío.
 
 ## 9. Preferencias del usuario y reglas de trabajo
 

@@ -28,13 +28,18 @@ require_once __DIR__ . '/../app/Repositories/ChatRepository.php';
 require_once __DIR__ . '/../app/Controllers/ManualReminderController.php';
 
 try {
-    $controller = new ManualReminderController(new ManualContactRepository(databaseConnection()));
+    $chatbotConfigured = ChatbotApiClient::isConfigured();
+    $controller = new ManualReminderController(new ManualContactRepository(databaseConnection()), $chatbotConfigured);
     $action = (string) ($_GET['action'] ?? '');
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         match ($action) {
             'create' => $controller->create($_POST),
-            'send' => $controller->send($_POST, $_FILES),
+            'send' => $controller->send(
+                $_POST,
+                $_FILES,
+                $chatbotConfigured ? ChatbotApiClient::fromEnvironment() : null,
+            ),
             'delete' => $controller->delete($_POST),
             default => (static function (): never {
                 http_response_code(404);

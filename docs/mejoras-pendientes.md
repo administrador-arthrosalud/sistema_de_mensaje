@@ -12,7 +12,7 @@ Hallazgos del análisis del proyecto (2026-10-16). Se abordarán **después** de
 - **Propuesta:** incluir en el snapshot una huella (hash) de `contactos`, programación y consultorio, y comparar también la huella.
 
 ### 2. Posible doble envío en el envío masivo — CORREGIDO (2026-10-17)
-- **Dónde:** `app/Controllers/BulkReminderController.php` (`send()`) y `AppointmentRepository::findReadyForBulkReminderById()` / `createReminderAttempt()`.
+- **Dónde:** `app/Controllers/BulkReminderController.php` (`send()`), `AppointmentRepository::findReadyForBulkReminderById()` y `AppointmentReminderRepository::createReminderAttempt()`.
 - **Problema:** se revisa "sin recordatorio `sent`" y recién después se crea el intento. Dos peticiones simultáneas (doble clic, dos operadores) pueden pasar la revisión y enviar dos veces. Confirmar en el repositorio si hay restricción única.
 - **Propuesta:** reservar la cita de forma atómica (`SELECT … FOR UPDATE` o índice único parcial sobre intentos `pending`/`sent` por cita) y deshabilitar el botón tras el primer clic.
 

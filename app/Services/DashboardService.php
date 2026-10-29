@@ -1,12 +1,14 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/../Contracts/AppointmentRepositoryInterface.php';
+
 final class DashboardService
 {
     private const PAGE_SIZE = 25;
     private const SEDES = ['LIMA', 'LINCE', 'LINCE - CONSULTORIO 3'];
 
-    public function __construct(private AppointmentRepository $appointments)
+    public function __construct(private AppointmentRepositoryInterface $appointments)
     {
     }
 

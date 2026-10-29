@@ -1,9 +1,11 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/../Contracts/ChatbotMessengerInterface.php';
+
 final class ManualReminderController
 {
-    public function __construct(private ManualContactRepository $contacts)
+    public function __construct(private ManualContactRepository $contacts, private bool $chatbotConfigured)
     {
     }
 
@@ -14,7 +16,7 @@ final class ManualReminderController
         $formatDate = static fn (string $date): string => (new DateTimeImmutable($date))->format('d/m/Y');
         $today = (new DateTimeImmutable('today'))->format('Y-m-d');
         $csrfToken = (string) ($_SESSION['csrf_token'] ?? '');
-        $chatbotConfigured = ChatbotApiClient::isConfigured();
+        $chatbotConfigured = $this->chatbotConfigured;
         $notification = $_SESSION['notification'] ?? null;
         unset($_SESSION['notification']);
         try {
@@ -75,14 +77,17 @@ final class ManualReminderController
         $this->redirectWith('success', 'Contacto temporal agregado. Revisa sus datos antes de enviar el recordatorio.');
     }
 
-    public function send(array $input, array $files = []): never
+    public function send(array $input, array $files = [], ?ChatbotMessengerInterface $chatbot = null): never
     {
         if (MessageAttachment::requestExceededPostLimit()) {
             $this->redirectWith('error', 'La imagen es demasiado grande; el máximo es 5 MB.');
         }
         $this->verifyCsrf($input);
-        if (!ChatbotApiClient::isConfigured()) {
+        if (!$this->chatbotConfigured) {
             $this->redirectWith('error', 'Configura CHATBOT_LINE_KEY antes de enviar recordatorios.');
+        }
+        if ($chatbot === null) {
+            $this->redirectWith('error', 'No se pudo preparar el cliente de WhatsApp.');
         }
 
         $id = filter_var($input['contact_id'] ?? null, FILTER_VALIDATE_INT);
@@ -103,7 +108,6 @@ final class ManualReminderController
         $apiAccepted = false;
         try {
             $attachment = MessageAttachment::fromUpload($files['attachment'] ?? null);
-            $chatbot = ChatbotApiClient::fromEnvironment();
             $destination = $chatbot->normalizeDestination((string) $contact['destination']);
             $attemptId = $this->contacts->createReminderAttempt($contact, $destination);
             $result = $chatbot->sendMessage($destination, $message, $attachment);

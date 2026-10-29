@@ -15,6 +15,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON manual_contacts TO siges_app;
 GRANT SELECT, INSERT, UPDATE ON users TO siges_app;
 -- Estado del sistema: lectura del latido del worker (migración 011).
 GRANT SELECT ON siges_sync_state TO siges_app;
+-- Envío automático: interruptor y resumen (migración 015).
+GRANT SELECT, INSERT, UPDATE ON app_settings TO siges_app;
+-- Cola de alertas técnicas por WhatsApp (migración 016).
+GRANT SELECT, INSERT, UPDATE ON system_error_alerts TO siges_app;
 
 -- Worker: único proceso que escribe la copia local de citas.
 GRANT SELECT, INSERT, UPDATE ON appointments, siges_sync_state TO siges_sync;

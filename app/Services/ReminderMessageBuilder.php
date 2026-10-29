@@ -15,6 +15,11 @@ final class ReminderMessageBuilder
         'LINCE' => 'Av. P.º de la República 2772, Lince 15046',
         'LINCE - CONSULTORIO 3' => 'Jr. Joaquín Bernal 344, Lince',
     ];
+    private const SEDE_MAP_LINKS = [
+        'LIMA' => 'https://maps.app.goo.gl/uuT3UsKLBS57XV4Z9',
+        'LINCE' => 'https://maps.app.goo.gl/GJPnx7zYda94qndy5',
+        'LINCE - CONSULTORIO 3' => 'https://maps.app.goo.gl/SSGKyWAWZuA3S9xC7',
+    ];
     private const LOWER_WORDS = ['de', 'del', 'la', 'las', 'los', 'y'];
 
     public static function build(
@@ -52,7 +57,7 @@ final class ReminderMessageBuilder
         $address = self::SEDE_ADDRESSES[$key] ?? null;
 
         return $address !== null
-            ? '📍*Sede ' . $key . ':* ' . $address
+            ? '📍*Sede ' . $key . ':* ' . $address . "\n🗺️*Mapa:* " . self::SEDE_MAP_LINKS[$key]
             : '📍*Sede:* ' . self::titleCase($sede);
     }
 

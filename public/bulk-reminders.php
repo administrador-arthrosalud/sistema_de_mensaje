@@ -25,18 +25,29 @@ if (!isset($_SESSION['csrf_token'])) {
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../app/Repositories/AppointmentRepository.php';
+require_once __DIR__ . '/../app/Repositories/AppointmentReminderRepository.php';
 require_once __DIR__ . '/../app/Repositories/ChatRepository.php';
 require_once __DIR__ . '/../app/Services/ChatbotApiClient.php';
 require_once __DIR__ . '/../app/Services/ReminderMessageBuilder.php';
+require_once __DIR__ . '/../app/Services/BulkReminderSender.php';
 require_once __DIR__ . '/../app/Controllers/BulkReminderController.php';
 
 try {
-    $controller = new BulkReminderController(new AppointmentRepository(databaseConnection()));
+    $database = databaseConnection();
+    $chatbotConfigured = ChatbotApiClient::isConfigured();
+    $controller = new BulkReminderController(
+        new AppointmentRepository($database),
+        new AppointmentReminderRepository($database),
+        $chatbotConfigured,
+    );
     $action = (string) ($_GET['action'] ?? '');
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         match ($action) {
-            'send' => $controller->send($_POST),
+            'send' => $controller->send(
+                $_POST,
+                $chatbotConfigured ? ChatbotApiClient::fromEnvironment() : null,
+            ),
             default => (static function (): never {
                 http_response_code(404);
                 exit('Acción no encontrada.');
